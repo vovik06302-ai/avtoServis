@@ -18,17 +18,30 @@ val resolvedVersionName: String = providers.gradleProperty("versionName").orNull
     ?.removePrefix("v")
     ?.removePrefix("V")
     ?.takeIf { it.matches(Regex("^\\d+\\.\\d+\\.\\d+.*$")) }
-  ?: "0.0.4"
+  ?: "0.0.5"
+
+val resolvedVersionCode: Int = providers.gradleProperty("versionCode").orNull
+  ?.trim()
+  ?.toIntOrNull()
+  ?: run {
+    val parts = resolvedVersionName.substringBefore("-").split(".")
+    val major = parts.getOrNull(0)?.toIntOrNull() ?: 0
+    val minor = parts.getOrNull(1)?.toIntOrNull() ?: 0
+    val patch = parts.getOrNull(2)?.toIntOrNull() ?: 0
+    val semverCode = major * 10000 + minor * 100 + patch
+    if (semverCode >= 5) semverCode else 5
+  }
 
 android {
   namespace = "com.example"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
+    // Постоянный applicationId — никогда не меняется, чтобы обновление ставилось поверх старой версии
     applicationId = "com.aistudio.autoservice.kxmpzq"
     minSdk = 24
     targetSdk = 36
-    versionCode = 4
+    versionCode = resolvedVersionCode
     versionName = resolvedVersionName
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -37,18 +50,49 @@ android {
   // Do not remove or modify these signingConfigs. They are necessary for building, installing,
   // and updating Android apps in AI Studio.
   signingConfigs {
-    create("release") {
-      val keystorePath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks"
-      storeFile = file(keystorePath)
-      storePassword = System.getenv("STORE_PASSWORD")
-      keyAlias = "upload"
-      keyPassword = System.getenv("KEY_PASSWORD")
-    }
     create("debugConfig") {
       storeFile = file("${rootDir}/debug.keystore")
       storePassword = "android"
       keyAlias = "androiddebugkey"
       keyPassword = "android"
+    }
+    create("release") {
+      val keystoreFilePath = System.getenv("KEYSTORE_FILE")?.takeIf { it.isNotBlank() }
+        ?: System.getenv("KEYSTORE_PATH")?.takeIf { it.isNotBlank() }
+      val keystorePasswordValue = System.getenv("KEYSTORE_PASSWORD")?.takeIf { it.isNotBlank() }
+        ?: System.getenv("STORE_PASSWORD")?.takeIf { it.isNotBlank() }
+      val keyAliasValue = System.getenv("KEY_ALIAS")?.takeIf { it.isNotBlank() }
+        ?: if (System.getenv("KEYSTORE_PATH") != null) "upload" else null
+      val keyPasswordValue = System.getenv("KEY_PASSWORD")?.takeIf { it.isNotBlank() }
+
+      val candidateKeystoreFile = keystoreFilePath?.let { file(it) }
+      val hasReleaseSigningEnv = candidateKeystoreFile != null &&
+        candidateKeystoreFile.exists() &&
+        !keystorePasswordValue.isNullOrBlank() &&
+        !keyAliasValue.isNullOrBlank() &&
+        !keyPasswordValue.isNullOrBlank()
+
+      if (hasReleaseSigningEnv && candidateKeystoreFile != null) {
+        storeFile = candidateKeystoreFile
+        storePassword = keystorePasswordValue
+        keyAlias = keyAliasValue
+        keyPassword = keyPasswordValue
+      } else {
+        // Fallback на debug-подпись при локальной сборке без переменных окружения, чтобы сборка не падала
+        val localDebugKeystore = file("${rootDir}/debug.keystore")
+        if (localDebugKeystore.exists()) {
+          storeFile = localDebugKeystore
+          storePassword = "android"
+          keyAlias = "androiddebugkey"
+          keyPassword = "android"
+        } else {
+          val defaultDebug = signingConfigs.getByName("debug")
+          storeFile = defaultDebug.storeFile
+          storePassword = defaultDebug.storePassword
+          keyAlias = defaultDebug.keyAlias
+          keyPassword = defaultDebug.keyPassword
+        }
+      }
     }
   }
 
