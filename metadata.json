@@ -1,0 +1,10 @@
+{
+  "name": "АвтоСервис Учёт",
+  "description": "Мобильное приложение для автосервиса: фотофиксация деталей, учёт видов ремонта, локальное хранение без интернета, экспорт в CSV и автообновление через GitHub Releases.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

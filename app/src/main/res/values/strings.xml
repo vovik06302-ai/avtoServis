@@ -1,0 +1,23 @@
+<resources>
+    <string name="app_name">АвтоСервис</string>
+    <string name="app_title_full">АвтоСервис Учёт</string>
+    <string name="search_placeholder">Поиск по номеру детали или ремонту…</string>
+    <string name="btn_new_record">+ Новая запись</string>
+    <string name="btn_export_csv">Экспорт CSV</string>
+    <string name="btn_take_photo">Сфотографировать</string>
+    <string name="btn_retake_photo">Переснять</string>
+    <string name="btn_pick_gallery">Из галереи</string>
+    <string name="label_part_number">Номер детали *</string>
+    <string name="hint_part_number">Например: 4F0 615 301 G</string>
+    <string name="label_repair_type">Вид ремонта</string>
+    <string name="label_date_time">Дата и время</string>
+    <string name="btn_save">Сохранить запись</string>
+    <string name="btn_edit">Редактировать</string>
+    <string name="btn_delete">Удалить</string>
+    <string name="btn_about_settings">О приложении и обновления</string>
+    <string name="btn_check_update">Проверить обновление</string>
+    <string name="btn_download_install">Скачать и установить</string>
+    <string name="msg_latest_version">У вас последняя версия</string>
+    <string name="msg_empty_records">Записей пока нет</string>
+    <string name="msg_empty_records_sub">Нажмите крупную оранжевую кнопку «+ Новая запись» внизу экрана, чтобы сфотографировать первую деталь.</string>
+</resources>
