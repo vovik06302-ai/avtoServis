@@ -18,7 +18,7 @@ val resolvedVersionName: String = providers.gradleProperty("versionName").orNull
     ?.removePrefix("v")
     ?.removePrefix("V")
     ?.takeIf { it.matches(Regex("^\\d+\\.\\d+\\.\\d+.*$")) }
-  ?: "1.0.0"
+  ?: "0.0.4"
 
 android {
   namespace = "com.example"
@@ -28,7 +28,7 @@ android {
     applicationId = "com.aistudio.autoservice.kxmpzq"
     minSdk = 24
     targetSdk = 36
-    versionCode = 1
+    versionCode = 4
     versionName = resolvedVersionName
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

@@ -7,6 +7,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.data.RepairRecord
 import com.example.data.RepairRepository
+import com.example.data.RepairStatus
 import com.example.ui.theme.AppThemeMode
 import com.example.update.GITHUB_REPO
 import com.example.update.ReleaseInfo
@@ -39,6 +40,10 @@ class RepairViewModel(
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
 
+    // null означает вкладку «Все», иначе конкретный статус («Приёмка», «В работе», «Готова»)
+    private val _selectedStatusFilter = MutableStateFlow<String?>(null)
+    val selectedStatusFilter: StateFlow<String?> = _selectedStatusFilter.asStateFlow()
+
     private val _themeMode = MutableStateFlow(loadSavedThemeMode())
     val themeMode: StateFlow<AppThemeMode> = _themeMode.asStateFlow()
 
@@ -67,18 +72,31 @@ class RepairViewModel(
     val allRecords: StateFlow<List<RepairRecord>> = repository.allRecords
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    val photosByRecordId: StateFlow<Map<Long, List<String>>> = repository.photosByRecordId
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
+
     val filteredRecords: StateFlow<List<RepairRecord>> = combine(
         allRecords,
-        _searchQuery
-    ) { records, query ->
-        val trimmed = query.trim()
-        if (trimmed.isEmpty()) {
-            records
-        } else {
-            records.filter { rec ->
-                rec.partNumber.contains(trimmed, ignoreCase = true) ||
-                    rec.repairType.contains(trimmed, ignoreCase = true) ||
-                    rec.dateTimeStr.contains(trimmed, ignoreCase = true)
+        _searchQuery,
+        _selectedStatusFilter
+    ) { records, query, statusFilter ->
+        val trimmedQuery = query.trim()
+        val queryDigits = trimmedQuery.filter { it.isDigit() }
+
+        records.filter { rec ->
+            val recStatus = RepairStatus.fromLabel(rec.status).label
+            val matchesStatus = statusFilter == null || recStatus.equals(statusFilter, ignoreCase = true)
+            if (!matchesStatus) return@filter false
+
+            if (trimmedQuery.isEmpty()) {
+                true
+            } else {
+                val recPhoneDigits = rec.phone.filter { it.isDigit() }
+                rec.partNumber.contains(trimmedQuery, ignoreCase = true) ||
+                    rec.repairType.contains(trimmedQuery, ignoreCase = true) ||
+                    rec.clientName.contains(trimmedQuery, ignoreCase = true) ||
+                    rec.phone.contains(trimmedQuery, ignoreCase = true) ||
+                    (queryDigits.isNotEmpty() && recPhoneDigits.contains(queryDigits))
             }
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -91,7 +109,6 @@ class RepairViewModel(
         )
 
     init {
-        // Автоматическая проверка обновлений при запуске приложения
         checkForUpdates(isManualTrigger = false)
     }
 
@@ -104,8 +121,19 @@ class RepairViewModel(
         return saved
     }
 
+    fun getPhotosForRecord(record: RepairRecord?): List<String> {
+        if (record == null) return emptyList()
+        val fromTable = photosByRecordId.value[record.id]
+        if (!fromTable.isNullOrEmpty()) return fromTable
+        return listOfNotNull(record.photoPath?.takeIf { it.isNotBlank() })
+    }
+
     fun updateSearchQuery(query: String) {
         _searchQuery.value = query
+    }
+
+    fun selectStatusFilter(statusLabel: String?) {
+        _selectedStatusFilter.value = statusLabel
     }
 
     fun navigateToNewRecord() {
@@ -139,50 +167,130 @@ class RepairViewModel(
         prefs.edit().putString(KEY_CUSTOM_REPO, cleaned).apply()
     }
 
+    fun changeRecordStatusQuickly(record: RepairRecord, newStatus: String) {
+        val normalizedNew = RepairStatus.fromLabel(newStatus).label
+        val normalizedOld = RepairStatus.fromLabel(record.status).label
+        if (normalizedNew == normalizedOld) return
+
+        val nowStr = ImageStorageHelper.formatCurrentDateTime()
+        viewModelScope.launch {
+            repository.updateRecordStatus(
+                id = record.id,
+                status = normalizedNew,
+                statusChangedAt = nowStr
+            )
+            showSnackbar("Статус «${record.partNumber}» изменён на «$normalizedNew»")
+        }
+    }
+
     fun saveRecord(
         existingRecord: RepairRecord?,
         partNumber: String,
         repairType: String,
+        status: String,
+        clientName: String,
+        phone: String,
         dateTimeStr: String,
-        photoPath: String?,
+        photoPaths: List<String>,
         onSaved: () -> Unit
     ) {
         val cleanPart = partNumber.trim()
+        val cleanClient = clientName.trim()
         if (cleanPart.isEmpty()) {
             showSnackbar("Введите номер детали")
             return
         }
+        if (cleanClient.isEmpty()) {
+            showSnackbar("Введите Ф.И.О. клиента")
+            return
+        }
+
         val cleanRepair = repairType.trim().ifEmpty { "замена" }
+        val cleanStatus = RepairStatus.fromLabel(status).label
+        val cleanPhone = phone.trim()
         val cleanDate = dateTimeStr.trim().ifEmpty { ImageStorageHelper.formatCurrentDateTime() }
+        val nowStr = ImageStorageHelper.formatCurrentDateTime()
+        val finalPhotos = photoPaths.filter { it.isNotBlank() }.take(RepairRepository.MAX_PHOTOS_PER_RECORD)
 
         viewModelScope.launch {
             if (existingRecord == null) {
-                repository.insertRecord(
-                    RepairRecord(
+                repository.insertRecordWithPhotos(
+                    record = RepairRecord(
                         partNumber = cleanPart,
                         repairType = cleanRepair,
                         dateTimeStr = cleanDate,
-                        photoPath = photoPath,
-                        createdAtMillis = System.currentTimeMillis()
-                    )
+                        photoPath = finalPhotos.firstOrNull(),
+                        createdAtMillis = System.currentTimeMillis(),
+                        status = cleanStatus,
+                        clientName = cleanClient,
+                        phone = cleanPhone,
+                        statusChangedAt = cleanDate
+                    ),
+                    photoPaths = finalPhotos
                 )
                 showSnackbar("Запись «$cleanPart» сохранена")
             } else {
-                if (existingRecord.photoPath != null && existingRecord.photoPath != photoPath) {
-                    ImageStorageHelper.deletePhotoFileIfExists(existingRecord.photoPath)
+                val previousPhotos = repository.getPhotosForRecord(existingRecord.id)
+                    .ifEmpty { listOfNotNull(existingRecord.photoPath?.takeIf { it.isNotBlank() }) }
+                val removedPhotos = previousPhotos.filter { it !in finalPhotos.toSet() }
+                ImageStorageHelper.deletePhotoFiles(removedPhotos)
+
+                val oldStatus = RepairStatus.fromLabel(existingRecord.status).label
+                val updatedStatusChangedAt = if (oldStatus != cleanStatus) {
+                    nowStr
+                } else {
+                    existingRecord.statusChangedAt.ifBlank { existingRecord.dateTimeStr }
                 }
-                repository.updateRecord(
-                    existingRecord.copy(
+
+                repository.updateRecordWithPhotos(
+                    record = existingRecord.copy(
                         partNumber = cleanPart,
                         repairType = cleanRepair,
                         dateTimeStr = cleanDate,
-                        photoPath = photoPath
-                    )
+                        photoPath = finalPhotos.firstOrNull(),
+                        status = cleanStatus,
+                        clientName = cleanClient,
+                        phone = cleanPhone,
+                        statusChangedAt = updatedStatusChangedAt
+                    ),
+                    photoPaths = finalPhotos
                 )
                 showSnackbar("Запись «$cleanPart» обновлена")
             }
             _screenState.value = ScreenState.RecordList
             onSaved()
+        }
+    }
+
+    /**
+     * Добавляет новые фото к существующей записи прямо с экрана просмотра записи.
+     */
+    fun addPhotosToExistingRecord(record: RepairRecord, newPaths: List<String>) {
+        val cleanNew = newPaths.filter { it.isNotBlank() }
+        if (cleanNew.isEmpty()) return
+        viewModelScope.launch {
+            val currentPhotos = repository.getPhotosForRecord(record.id)
+                .ifEmpty { listOfNotNull(record.photoPath?.takeIf { it.isNotBlank() }) }
+
+            if (currentPhotos.size >= RepairRepository.MAX_PHOTOS_PER_RECORD) {
+                ImageStorageHelper.deletePhotoFiles(cleanNew)
+                showSnackbar("В одной записи может быть максимум ${RepairRepository.MAX_PHOTOS_PER_RECORD} фото")
+                return@launch
+            }
+
+            val availableSlots = RepairRepository.MAX_PHOTOS_PER_RECORD - currentPhotos.size
+            val accepted = cleanNew.take(availableSlots)
+            val overflow = cleanNew.drop(availableSlots)
+            if (overflow.isNotEmpty()) {
+                ImageStorageHelper.deletePhotoFiles(overflow)
+            }
+
+            val updated = repository.appendPhotosToRecord(record.id, accepted)
+            if (overflow.isNotEmpty()) {
+                showSnackbar("Добавлено ${accepted.size} фото. Достигнут максимум (${RepairRepository.MAX_PHOTOS_PER_RECORD} фото)")
+            } else {
+                showSnackbar("Добавлено фото: ${accepted.size} (всего ${updated.size} из ${RepairRepository.MAX_PHOTOS_PER_RECORD})")
+            }
         }
     }
 
@@ -198,9 +306,11 @@ class RepairViewModel(
 
     fun deleteRecord(record: RepairRecord) {
         viewModelScope.launch {
+            val photos = repository.getPhotosForRecord(record.id)
+            ImageStorageHelper.deletePhotoFiles(photos)
             ImageStorageHelper.deletePhotoFileIfExists(record.photoPath)
             repository.deleteRecordById(record.id)
-            showSnackbar("Запись «${record.partNumber}» удалена")
+            showSnackbar("Запись «${record.partNumber}» и её фотографии удалены")
             _screenState.value = ScreenState.RecordList
         }
     }
@@ -212,7 +322,11 @@ class RepairViewModel(
             return
         }
         viewModelScope.launch {
-            val result = ImageStorageHelper.shareCsvFile(context, list)
+            val result = ImageStorageHelper.shareCsvFile(
+                context = context,
+                records = list,
+                photosByRecordId = photosByRecordId.value
+            )
             result.onFailure {
                 showSnackbar("Не удалось выгрузить CSV: ${it.localizedMessage ?: "ошибка"}")
             }

@@ -57,7 +57,9 @@ fun AutoServiceApp(viewModel: RepairViewModel) {
     val context = LocalContext.current
     val screenState by viewModel.screenState.collectAsStateWithLifecycle()
     val allRecords by viewModel.allRecords.collectAsStateWithLifecycle()
+    val photosByRecordId by viewModel.photosByRecordId.collectAsStateWithLifecycle()
     val filteredRecords by viewModel.filteredRecords.collectAsStateWithLifecycle()
+    val selectedStatusFilter by viewModel.selectedStatusFilter.collectAsStateWithLifecycle()
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val repairTypes by viewModel.repairTypes.collectAsStateWithLifecycle()
     val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
@@ -91,12 +93,18 @@ fun AutoServiceApp(viewModel: RepairViewModel) {
             when (val state = screenState) {
                 is ScreenState.RecordList -> {
                     RecordListScreen(
+                        allRecords = allRecords,
                         records = filteredRecords,
-                        totalRecordsCount = allRecords.size,
+                        photosByRecordId = photosByRecordId,
+                        selectedStatusFilter = selectedStatusFilter,
+                        onSelectStatusFilter = viewModel::selectStatusFilter,
                         searchQuery = searchQuery,
                         onSearchQueryChange = viewModel::updateSearchQuery,
                         onNewRecordClick = viewModel::navigateToNewRecord,
                         onRecordClick = { record -> viewModel.navigateToDetail(record.id) },
+                        onStatusChangeClick = { record, newStatus ->
+                            viewModel.changeRecordStatusQuickly(record, newStatus)
+                        },
                         onExportCsvClick = { viewModel.exportCsv(context) },
                         onAboutClick = viewModel::navigateToAbout,
                         availableRelease = availableRelease,
@@ -110,17 +118,26 @@ fun AutoServiceApp(viewModel: RepairViewModel) {
                 }
 
                 is ScreenState.RecordEditor -> {
+                    val editingPhotos = state.editingRecord?.let { rec ->
+                        photosByRecordId[rec.id]
+                            ?: listOfNotNull(rec.photoPath?.takeIf { it.isNotBlank() })
+                    } ?: emptyList()
+
                     RecordEditorScreen(
                         editingRecord = state.editingRecord,
+                        initialPhotos = editingPhotos,
                         availableRepairTypes = repairTypes,
                         onAddCustomRepairType = viewModel::addCustomRepairType,
-                        onSaveRecord = { partNumber, repairType, dateTimeStr, photoPath ->
+                        onSaveRecord = { partNumber, repairType, status, clientName, phone, dateTimeStr, photoPaths ->
                             viewModel.saveRecord(
                                 existingRecord = state.editingRecord,
                                 partNumber = partNumber,
                                 repairType = repairType,
+                                status = status,
+                                clientName = clientName,
+                                phone = phone,
                                 dateTimeStr = dateTimeStr,
-                                photoPath = photoPath,
+                                photoPaths = photoPaths,
                                 onSaved = {}
                             )
                         },
@@ -131,11 +148,24 @@ fun AutoServiceApp(viewModel: RepairViewModel) {
 
                 is ScreenState.RecordDetail -> {
                     val selectedRecord = allRecords.find { it.id == state.recordId }
+                    val detailPhotos = selectedRecord?.let { rec ->
+                        photosByRecordId[rec.id]
+                            ?: listOfNotNull(rec.photoPath?.takeIf { it.isNotBlank() })
+                    } ?: emptyList()
+
                     RecordDetailScreen(
                         record = selectedRecord,
+                        photoPaths = detailPhotos,
+                        onAddPhotos = { rec, newPaths ->
+                            viewModel.addPhotosToExistingRecord(rec, newPaths)
+                        },
+                        onStatusChange = { rec, newStatus ->
+                            viewModel.changeRecordStatusQuickly(rec, newStatus)
+                        },
                         onEditClick = { rec -> viewModel.navigateToEditRecord(rec) },
                         onDeleteConfirm = { rec -> viewModel.deleteRecord(rec) },
-                        onNavigateBack = viewModel::navigateBackToList
+                        onNavigateBack = viewModel::navigateBackToList,
+                        onMessage = viewModel::showSnackbar
                     )
                 }
 
@@ -160,7 +190,6 @@ fun AutoServiceApp(viewModel: RepairViewModel) {
                 }
             }
 
-            // Модальный диалог обновления с анимированным ProgressBar при наличии новой версии
             val release = availableRelease
             if (release != null) {
                 UpdateAvailableDialog(

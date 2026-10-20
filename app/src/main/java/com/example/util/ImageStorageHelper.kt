@@ -11,6 +11,7 @@ import android.graphics.RectF
 import android.net.Uri
 import androidx.core.content.FileProvider
 import com.example.data.RepairRecord
+import com.example.data.RepairStatus
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -18,13 +19,15 @@ import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.max
 import kotlin.math.roundToInt
 
 object ImageStorageHelper {
 
     private const val MAX_LONG_SIDE_PX = 1280
-    private const val JPEG_QUALITY = 80 // ~0.8
+    private const val JPEG_QUALITY = 80 // ~80%
+    private val fileCounter = AtomicInteger(0)
 
     fun formatCurrentDateTime(date: Date = Date()): String {
         val formatter = SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.forLanguageTag("ru-RU"))
@@ -32,11 +35,66 @@ object ImageStorageHelper {
     }
 
     /**
+     * Форматирует вводимый номер телефона по маске +7 (XXX) XXX-XX-XX.
+     */
+    fun formatRussianPhoneMask(rawInput: String): String {
+        val allDigits = rawInput.filter { it.isDigit() }
+        if (allDigits.isEmpty()) return ""
+
+        val subscriberDigits = when {
+            allDigits.startsWith("7") || allDigits.startsWith("8") -> allDigits.drop(1)
+            else -> allDigits
+        }.take(10)
+
+        if (subscriberDigits.isEmpty()) {
+            return "+7 ("
+        }
+
+        val sb = StringBuilder("+7 (")
+        for (i in subscriberDigits.indices) {
+            when (i) {
+                3 -> sb.append(") ")
+                6 -> sb.append("-")
+                8 -> sb.append("-")
+            }
+            sb.append(subscriberDigits[i])
+        }
+        return sb.toString()
+    }
+
+    /**
+     * Подготавливает номер телефона для интента звонка (tel:+7XXXXXXXXXX).
+     */
+    fun normalizePhoneForDial(phone: String): String {
+        val digits = phone.filter { it.isDigit() }
+        if (digits.isEmpty()) return ""
+        return when {
+            digits.startsWith("7") && digits.length == 11 -> "+$digits"
+            digits.startsWith("8") && digits.length == 11 -> "+7${digits.drop(1)}"
+            digits.length == 10 -> "+7$digits"
+            else -> "+$digits"
+        }
+    }
+
+    /**
+     * Открывает системную звонилку телефона с указанным номером.
+     */
+    fun openPhoneDialer(context: Context, phone: String) {
+        val dialNumber = normalizePhoneForDial(phone)
+        if (dialNumber.isBlank()) return
+        val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$dialNumber")).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(intent)
+    }
+
+    /**
      * Создаёт временный файл для съёмки с камеры и возвращает его File и content:// Uri.
      */
     fun createTempCameraFileUri(context: Context): Pair<File, Uri> {
         val cameraDir = File(context.cacheDir, "camera").apply { mkdirs() }
-        val file = File(cameraDir, "capture_${System.currentTimeMillis()}.jpg")
+        val seq = fileCounter.incrementAndGet()
+        val file = File(cameraDir, "capture_${System.currentTimeMillis()}_$seq.jpg")
         val uri = FileProvider.getUriForFile(
             context,
             "${context.packageName}.fileprovider",
@@ -47,15 +105,14 @@ object ImageStorageHelper {
 
     /**
      * Сжимает изображение с камеры или из галереи:
-     * длинная сторона <= 1280 px, формат JPEG с качеством 80 (~0.8),
-     * и сохраняет локально во внутренней памяти телефона.
+     * длинная сторона <= 1280 px, формат JPEG с качеством 80 (~80%),
+     * и сохраняет локально во внутреннем хранилище приложения.
      */
     suspend fun compressAndSavePhoto(
         context: Context,
         sourceUri: Uri
     ): String? = withContext(Dispatchers.IO) {
         try {
-            // 1. Читаем размеры без загрузки всего битмапа в память
             val boundsOptions = BitmapFactory.Options().apply {
                 inJustDecodeBounds = true
             }
@@ -67,11 +124,10 @@ object ImageStorageHelper {
             val srcHeight = boundsOptions.outHeight
             if (srcWidth <= 0 || srcHeight <= 0) return@withContext null
 
-            // Вычисляем inSampleSize для экономии оперативной памяти
             var inSampleSize = 1
             val longestSide = max(srcWidth, srcHeight)
             if (longestSide > MAX_LONG_SIDE_PX * 2) {
-                var halfLong = longestSide / 2
+                val halfLong = longestSide / 2
                 while ((halfLong / inSampleSize) >= MAX_LONG_SIDE_PX) {
                     inSampleSize *= 2
                 }
@@ -84,7 +140,6 @@ object ImageStorageHelper {
                 BitmapFactory.decodeStream(stream, null, decodeOptions)
             } ?: return@withContext null
 
-            // 2. Точное масштабирование до 1280 px по длинной стороне
             val currentLongSide = max(decodedBitmap.width, decodedBitmap.height)
             val finalBitmap = if (currentLongSide > MAX_LONG_SIDE_PX) {
                 val ratio = MAX_LONG_SIDE_PX.toFloat() / currentLongSide.toFloat()
@@ -99,9 +154,9 @@ object ImageStorageHelper {
                 decodedBitmap
             }
 
-            // 3. Сохраняем сжатый JPEG (качество 80 = 0.8) в локальную папку photos/
             val photosDir = File(context.filesDir, "photos").apply { mkdirs() }
-            val destFile = File(photosDir, "part_${System.currentTimeMillis()}.jpg")
+            val seq = fileCounter.incrementAndGet()
+            val destFile = File(photosDir, "part_${System.currentTimeMillis()}_$seq.jpg")
             FileOutputStream(destFile).use { out ->
                 finalBitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, out)
                 out.flush()
@@ -138,7 +193,7 @@ object ImageStorageHelper {
     }
 
     /**
-     * Удаляет локальный файл фотографии при удалении записи, чтобы не забивать память.
+     * Удаляет локальный файл фотографии при удалении фото или записи.
      */
     fun deletePhotoFileIfExists(path: String?) {
         if (path.isNullOrBlank()) return
@@ -152,12 +207,20 @@ object ImageStorageHelper {
     }
 
     /**
-     * Создаёт наглядное демо-фото автомобильной детали (1280x960, JPEG 0.8),
+     * Удаляет список локальных файлов фотографий.
+     */
+    fun deletePhotoFiles(paths: Collection<String?>) {
+        paths.forEach { deletePhotoFileIfExists(it) }
+    }
+
+    /**
+     * Создаёт наглядное демо-фото автомобильной детали (1280x960, JPEG 80%),
      * если мастер или тестировщик проверяет работу в эмуляторе без физической камеры.
      */
     suspend fun createWorkshopPartSnapshot(
         context: Context,
-        partCodeLabel: String
+        partCodeLabel: String,
+        photoIndexLabel: Int = 1
     ): String? = withContext(Dispatchers.IO) {
         try {
             val width = 1280
@@ -165,7 +228,6 @@ object ImageStorageHelper {
             val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
             val canvas = Canvas(bitmap)
 
-            // Фон верстака
             canvas.drawColor(Color.parseColor("#1E293B"))
 
             val gridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -179,7 +241,6 @@ object ImageStorageHelper {
                 canvas.drawLine(0f, y.toFloat(), width.toFloat(), y.toFloat(), gridPaint)
             }
 
-            // Силуэт тормозного диска / узла
             val discPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.parseColor("#64748B")
                 style = Paint.Style.FILL
@@ -199,8 +260,7 @@ object ImageStorageHelper {
             }
             canvas.drawCircle(width / 2f, height / 2f - 40f, 95f, hubPaint)
 
-            // Оранжевая бирка с номером детали
-            val badgeRect = RectF(220f, height - 210f, width - 220f, height - 70f)
+            val badgeRect = RectF(180f, height - 210f, width - 180f, height - 70f)
             val badgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.parseColor("#F97316")
                 style = Paint.Style.FILL
@@ -209,20 +269,21 @@ object ImageStorageHelper {
 
             val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.WHITE
-                textSize = 44f
+                textSize = 42f
                 isFakeBoldText = true
                 textAlign = Paint.Align.CENTER
             }
             val codeToDraw = partCodeLabel.ifBlank { "ДЕТАЛЬ АВТОСЕРВИСА" }
             canvas.drawText(
-                "ДЕТАЛЬ: $codeToDraw",
+                "ДЕТАЛЬ: $codeToDraw • ФОТО №$photoIndexLabel",
                 width / 2f,
                 height - 125f,
                 textPaint
             )
 
             val photosDir = File(context.filesDir, "photos").apply { mkdirs() }
-            val destFile = File(photosDir, "part_${System.currentTimeMillis()}.jpg")
+            val seq = fileCounter.incrementAndGet()
+            val destFile = File(photosDir, "part_${System.currentTimeMillis()}_$seq.jpg")
             FileOutputStream(destFile).use { out ->
                 bitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, out)
                 out.flush()
@@ -236,18 +297,37 @@ object ImageStorageHelper {
 
     /**
      * Формирует CSV-строку (с UTF-8 BOM для корректного открытия русских букв в Excel).
+     * Включает столбцы: ID, Статус, Номер детали, Вид ремонта, Ф.И.О. клиента, Телефон,
+     * Дата и время, Дата смены статуса, Количество фото, Фото файлы.
      */
-    fun buildCsvContent(records: List<RepairRecord>): String {
+    fun buildCsvContent(
+        records: List<RepairRecord>,
+        photosByRecordId: Map<Long, List<String>> = emptyMap()
+    ): String {
         val sb = StringBuilder()
-        // UTF-8 BOM для Microsoft Excel / LibreOffice
         sb.append('\uFEFF')
-        sb.append("ID;Номер детали;Вид ремонта;Дата и время;Фото файл\r\n")
+        sb.append("ID;Статус;Номер детали;Вид ремонта;Ф.И.О. клиента;Телефон;Дата и время;Дата смены статуса;Количество фото;Фото файлы\r\n")
         for (record in records) {
+            val safeStatus = escapeCsvField(record.status.ifBlank { RepairStatus.RECEPTION.label })
             val safePart = escapeCsvField(record.partNumber)
             val safeRepair = escapeCsvField(record.repairType)
+            val safeClient = escapeCsvField(record.clientName)
+            val safePhone = escapeCsvField(record.phone)
             val safeDate = escapeCsvField(record.dateTimeStr)
-            val photoName = record.photoPath?.let { File(it).name } ?: "Нет фото"
-            sb.append("${record.id};$safePart;$safeRepair;$safeDate;${escapeCsvField(photoName)}\r\n")
+            val safeStatusDate = escapeCsvField(record.statusChangedAt.ifBlank { record.dateTimeStr })
+
+            val recordPhotos = photosByRecordId[record.id]
+                ?: listOfNotNull(record.photoPath?.takeIf { it.isNotBlank() })
+            val photoCount = recordPhotos.size
+            val photoNames = if (recordPhotos.isEmpty()) {
+                "Нет фото"
+            } else {
+                recordPhotos.joinToString(", ") { File(it).name }
+            }
+
+            sb.append(
+                "${record.id};$safeStatus;$safePart;$safeRepair;$safeClient;$safePhone;$safeDate;$safeStatusDate;$photoCount;${escapeCsvField(photoNames)}\r\n"
+            )
         }
         return sb.toString()
     }
@@ -264,9 +344,13 @@ object ImageStorageHelper {
     /**
      * Экспортирует записи в CSV-файл во временную папку и открывает системное меню «Поделиться / Сохранить».
      */
-    suspend fun shareCsvFile(context: Context, records: List<RepairRecord>): Result<File> = withContext(Dispatchers.IO) {
+    suspend fun shareCsvFile(
+        context: Context,
+        records: List<RepairRecord>,
+        photosByRecordId: Map<Long, List<String>> = emptyMap()
+    ): Result<File> = withContext(Dispatchers.IO) {
         try {
-            val csvText = buildCsvContent(records)
+            val csvText = buildCsvContent(records, photosByRecordId)
             val exportDir = File(context.cacheDir, "exports").apply { mkdirs() }
             val stamp = SimpleDateFormat("yyyyMMdd_HHmm", Locale.US).format(Date())
             val csvFile = File(exportDir, "autoservice_records_$stamp.csv")

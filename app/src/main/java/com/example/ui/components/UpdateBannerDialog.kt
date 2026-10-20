@@ -9,10 +9,12 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,9 +27,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.AlertDialog
@@ -35,6 +40,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -56,6 +63,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
@@ -64,6 +72,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.RepairStatus
 import com.example.ui.theme.JetBrainsMonoFontFamily
 import com.example.ui.theme.SafetyOrange
 import com.example.ui.theme.WorkshopAmber
@@ -72,6 +81,134 @@ import com.example.ui.theme.WorkshopGreen
 import com.example.update.ReleaseInfo
 import com.example.util.ImageStorageHelper
 import kotlin.math.roundToInt
+
+/**
+ * Возвращает контрастный цвет статуса для светлой и тёмной темы:
+ * - «Приёмка» — синий
+ * - «В работе» — оранжевый
+ * - «Готова» — зелёный
+ */
+@Composable
+fun getStatusAccentColor(statusLabel: String): Color {
+    val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    return when (RepairStatus.fromLabel(statusLabel)) {
+        RepairStatus.RECEPTION -> if (isDark) Color(0xFF38BDF8) else Color(0xFF1D4ED8)
+        RepairStatus.IN_PROGRESS -> if (isDark) Color(0xFFFB923C) else Color(0xFFEA580C)
+        RepairStatus.READY -> if (isDark) Color(0xFF34D399) else Color(0xFF059669)
+    }
+}
+
+/**
+ * Возвращает цвет вертикальной полосы для статуса.
+ */
+@Composable
+fun getStatusBarColor(statusLabel: String): Color {
+    return when (RepairStatus.fromLabel(statusLabel)) {
+        RepairStatus.RECEPTION -> Color(0xFF2563EB)
+        RepairStatus.IN_PROGRESS -> Color(0xFFF97316)
+        RepairStatus.READY -> Color(0xFF10B981)
+    }
+}
+
+/**
+ * Интерактивный цветной бейдж статуса на карточке:
+ * по одному нажатию открывает выбор из трёх статусов («Приёмка», «В работе», «Готова»).
+ */
+@Composable
+fun StatusBadgeSelector(
+    currentStatus: String,
+    onStatusChange: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val normalizedStatus = RepairStatus.fromLabel(currentStatus).label
+    val textColor = getStatusAccentColor(normalizedStatus)
+    val barColor = getStatusBarColor(normalizedStatus)
+
+    Box(modifier = modifier) {
+        Surface(
+            modifier = Modifier
+                .clip(RoundedCornerShape(10.dp))
+                .clickable { expanded = true }
+                .testTag("status_badge_button"),
+            shape = RoundedCornerShape(10.dp),
+            color = barColor.copy(alpha = 0.16f),
+            border = BorderStroke(1.5.dp, barColor.copy(alpha = 0.75f))
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(start = 10.dp, end = 6.dp, top = 6.dp, bottom = 6.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(barColor)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = normalizedStatus,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = textColor,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp
+                )
+                Icon(
+                    imageVector = Icons.Default.ArrowDropDown,
+                    contentDescription = "Изменить статус",
+                    tint = textColor,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+        }
+
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
+            RepairStatus.entries.forEach { statusOption ->
+                val optionColor = getStatusBarColor(statusOption.label)
+                val isSelected = statusOption.label == normalizedStatus
+                DropdownMenuItem(
+                    text = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(12.dp)
+                                    .clip(CircleShape)
+                                    .background(optionColor)
+                            )
+                            Text(
+                                text = statusOption.label,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                            )
+                        }
+                    },
+                    trailingIcon = {
+                        if (isSelected) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = "Выбрано",
+                                tint = optionColor
+                            )
+                        }
+                    },
+                    onClick = {
+                        expanded = false
+                        if (statusOption.label != normalizedStatus) {
+                            onStatusChange(statusOption.label)
+                        }
+                    },
+                    modifier = Modifier.height(48.dp)
+                )
+            }
+        }
+    }
+}
 
 /**
  * Компонент ProgressBar с плавным анимированным заполнением и движущимся световым бликом
@@ -85,7 +222,6 @@ fun ProgressBar(
 ) {
     val targetProgress = progress.coerceIn(0f, 1f)
 
-    // Плавная анимация заполнения шкалы
     val animatedProgress by animateFloatAsState(
         targetValue = targetProgress,
         animationSpec = tween(
@@ -95,7 +231,6 @@ fun ProgressBar(
         label = "apk_progress_fill"
     )
 
-    // Бесконечная анимация светового блика по заполненной части шкалы
     val infiniteTransition = rememberInfiniteTransition(label = "apk_progress_shimmer")
     val shimmerOffset by infiniteTransition.animateFloat(
         initialValue = -0.35f,
@@ -171,7 +306,6 @@ fun ProgressBar(
                         cornerRadius = CornerRadius(10.dp.toPx(), 10.dp.toPx())
                     )
 
-                    // Анимированный блик поверх заполняемой полосы
                     if (animatedProgress < 1f) {
                         val bandWidth = size.width * 0.28f
                         val startX = shimmerOffset * fillWidth
@@ -197,9 +331,6 @@ fun ProgressBar(
     }
 }
 
-/**
- * Модальный диалог обновления приложения через GitHub API с анимированным ProgressBar.
- */
 @Composable
 fun UpdateAvailableDialog(
     release: ReleaseInfo,
@@ -467,14 +598,15 @@ fun RepairTypeBadge(
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(8.dp),
-        color = badgeColor.copy(alpha = 0.18f)
+        color = badgeColor.copy(alpha = 0.16f)
     ) {
         Text(
             text = repairType.uppercase(),
             style = MaterialTheme.typography.labelMedium,
             color = badgeColor,
             fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+            fontSize = 12.sp,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
         )
     }
 }

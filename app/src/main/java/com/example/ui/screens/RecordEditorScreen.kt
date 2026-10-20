@@ -8,12 +8,17 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -26,17 +31,23 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.EditCalendar
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.PhotoLibrary
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -62,6 +73,8 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -71,16 +84,28 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import androidx.core.content.ContextCompat
 import com.example.data.RepairRecord
+import com.example.data.RepairRepository
+import com.example.data.RepairStatus
 import com.example.ui.components.LocalPhotoThumbnail
+import com.example.ui.components.getStatusBarColor
 import com.example.ui.theme.JetBrainsMonoFontFamily
 import com.example.ui.theme.WorkshopGreen
+import com.example.ui.theme.WorkshopRed
 import com.example.util.ImageStorageHelper
 import kotlinx.coroutines.launch
 import java.io.File
@@ -89,13 +114,17 @@ import java.io.File
 @Composable
 fun RecordEditorScreen(
     editingRecord: RepairRecord?,
+    initialPhotos: List<String>,
     availableRepairTypes: List<String>,
     onAddCustomRepairType: (String) -> Unit,
     onSaveRecord: (
         partNumber: String,
         repairType: String,
+        status: String,
+        clientName: String,
+        phone: String,
         dateTimeStr: String,
-        photoPath: String?
+        photoPaths: List<String>
     ) -> Unit,
     onNavigateBack: () -> Unit,
     onMessage: (String) -> Unit
@@ -106,9 +135,28 @@ fun RecordEditorScreen(
 
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
+    val density = LocalDensity.current
 
     var partNumber by rememberSaveable {
         mutableStateOf(editingRecord?.partNumber ?: "")
+    }
+    var selectedStatus by rememberSaveable {
+        mutableStateOf(
+            editingRecord?.status?.takeIf { it.isNotBlank() }
+                ?: RepairStatus.RECEPTION.label
+        )
+    }
+    var clientName by rememberSaveable {
+        mutableStateOf(editingRecord?.clientName ?: "")
+    }
+    var phoneFieldValue by remember {
+        val initialPhone = editingRecord?.phone ?: ""
+        mutableStateOf(
+            TextFieldValue(
+                text = initialPhone,
+                selection = TextRange(initialPhone.length)
+            )
+        )
     }
     var selectedRepairType by rememberSaveable {
         mutableStateOf(
@@ -117,19 +165,33 @@ fun RecordEditorScreen(
                 ?: "замена"
         )
     }
-    // Дата и время ставятся АВТОМАТИЧЕСКИ в момент открытия экрана (ДД.ММ.ГГГГ ЧЧ:ММ)
     var dateTimeStr by rememberSaveable {
         mutableStateOf(
             editingRecord?.dateTimeStr ?: ImageStorageHelper.formatCurrentDateTime()
         )
     }
-    var photoPath by rememberSaveable {
-        mutableStateOf(editingRecord?.photoPath)
+
+    // Список путей к фотографиям текущей записи (максимум 10)
+    var photoPaths by rememberSaveable {
+        val seed = if (initialPhotos.isNotEmpty()) {
+            initialPhotos
+        } else {
+            listOfNotNull(editingRecord?.photoPath?.takeIf { it.isNotBlank() })
+        }
+        mutableStateOf(seed.take(RepairRepository.MAX_PHOTOS_PER_RECORD))
     }
 
     var isCompressingPhoto by remember { mutableStateOf(false) }
     var tempCameraUri by remember { mutableStateOf<Uri?>(null) }
     var tempCameraFile by remember { mutableStateOf<File?>(null) }
+
+    // Подтверждение удаления отдельного фото
+    var photoIndexPendingDelete by remember { mutableStateOf<Int?>(null) }
+
+    // Состояние перетаскивания миниатюр (долгое нажатие + сдвиг)
+    var draggedIndex by remember { mutableStateOf<Int?>(null) }
+    var dragOffsetX by remember { mutableFloatStateOf(0f) }
+    val itemStepPx = with(density) { 132.dp.toPx() }
 
     var showRepairDropdown by remember { mutableStateOf(false) }
     var showAddCustomTypeDialog by remember { mutableStateOf(false) }
@@ -138,19 +200,24 @@ fun RecordEditorScreen(
     var showEditDateTimeDialog by remember { mutableStateOf(false) }
     var manualDateTimeInput by remember { mutableStateOf(dateTimeStr) }
 
-    // Обработчик результата съёмки с камеры
     val takePictureLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.TakePicture()
     ) { success ->
         val capturedUri = tempCameraUri
         if (success && capturedUri != null) {
             coroutineScope.launch {
+                if (photoPaths.size >= RepairRepository.MAX_PHOTOS_PER_RECORD) {
+                    tempCameraFile?.delete()
+                    onMessage("Достигнут лимит: максимум ${RepairRepository.MAX_PHOTOS_PER_RECORD} фото в одной записи")
+                    return@launch
+                }
                 isCompressingPhoto = true
                 val compressedPath = ImageStorageHelper.compressAndSavePhoto(context, capturedUri)
                 tempCameraFile?.delete()
                 isCompressingPhoto = false
                 if (compressedPath != null) {
-                    photoPath = compressedPath
+                    photoPaths = (photoPaths + compressedPath).take(RepairRepository.MAX_PHOTOS_PER_RECORD)
+                    onMessage("Фото добавлено (${photoPaths.size} из ${RepairRepository.MAX_PHOTOS_PER_RECORD}). Можно сразу снять следующее.")
                 } else {
                     onMessage("Не удалось обработать снимок с камеры")
                 }
@@ -158,7 +225,6 @@ fun RecordEditorScreen(
         }
     }
 
-    // Запрос разрешения на камеру + запуск съёмки
     val cameraPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { isGranted ->
@@ -169,32 +235,58 @@ fun RecordEditorScreen(
                 tempCameraUri = uri
                 takePictureLauncher.launch(uri)
             } catch (e: Exception) {
-                onMessage("Камера недоступна: используйте выбор файла или демо-фото")
+                onMessage("Камера недоступна: используйте «+ Из галереи» или демо-фото")
             }
         } else {
-            onMessage("Разрешение на камеру отклонено. Вы можете выбрать фото из памяти.")
+            onMessage("Разрешение на камеру отклонено. Вы можете выбрать фото из галереи.")
         }
     }
 
-    // Запасной вариант: выбор фото через системный Photo Picker (без разрешений на хранилище)
-    val pickPhotoLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickVisualMedia()
-    ) { uri: Uri? ->
-        if (uri != null) {
+    val pickMultiplePhotosLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickMultipleVisualMedia(RepairRepository.MAX_PHOTOS_PER_RECORD)
+    ) { uris: List<Uri> ->
+        if (uris.isNotEmpty()) {
             coroutineScope.launch {
+                val remaining = RepairRepository.MAX_PHOTOS_PER_RECORD - photoPaths.size
+                if (remaining <= 0) {
+                    onMessage("Можно добавить максимум ${RepairRepository.MAX_PHOTOS_PER_RECORD} фото в одну запись")
+                    return@launch
+                }
+                val urisToProcess = uris.take(remaining)
+                val skippedCount = uris.size - urisToProcess.size
+
                 isCompressingPhoto = true
-                val compressedPath = ImageStorageHelper.compressAndSavePhoto(context, uri)
+                val addedPaths = mutableListOf<String>()
+                for (uri in urisToProcess) {
+                    val path = ImageStorageHelper.compressAndSavePhoto(context, uri)
+                    if (path != null) {
+                        addedPaths.add(path)
+                    }
+                }
                 isCompressingPhoto = false
-                if (compressedPath != null) {
-                    photoPath = compressedPath
+
+                if (addedPaths.isNotEmpty()) {
+                    photoPaths = (photoPaths + addedPaths).take(RepairRepository.MAX_PHOTOS_PER_RECORD)
+                }
+
+                if (skippedCount > 0) {
+                    onMessage(
+                        "Добавлено ${addedPaths.size} фото. Лимит ${RepairRepository.MAX_PHOTOS_PER_RECORD} фото: лишние $skippedCount фото пропущены."
+                    )
+                } else if (addedPaths.isNotEmpty()) {
+                    onMessage("Добавлено фото: ${addedPaths.size} (всего ${photoPaths.size} из ${RepairRepository.MAX_PHOTOS_PER_RECORD})")
                 } else {
-                    onMessage("Не удалось сжать выбранное изображение")
+                    onMessage("Не удалось сжать выбранные изображения")
                 }
             }
         }
     }
 
     fun launchCameraCapture() {
+        if (photoPaths.size >= RepairRepository.MAX_PHOTOS_PER_RECORD) {
+            onMessage("Можно добавить максимум ${RepairRepository.MAX_PHOTOS_PER_RECORD} фото в одну запись")
+            return
+        }
         val granted = ContextCompat.checkSelfPermission(
             context,
             Manifest.permission.CAMERA
@@ -213,7 +305,17 @@ fun RecordEditorScreen(
         }
     }
 
-    val isSaveEnabled = partNumber.trim().isNotEmpty() && !isCompressingPhoto
+    fun movePhoto(fromIndex: Int, toIndex: Int) {
+        if (fromIndex !in photoPaths.indices || toIndex !in photoPaths.indices || fromIndex == toIndex) return
+        val mutable = photoPaths.toMutableList()
+        val item = mutable.removeAt(fromIndex)
+        mutable.add(toIndex, item)
+        photoPaths = mutable
+    }
+
+    val isSaveEnabled = partNumber.trim().isNotEmpty() &&
+        clientName.trim().isNotEmpty() &&
+        !isCompressingPhoto
 
     Scaffold(
         contentWindowInsets = WindowInsets.safeDrawing,
@@ -258,8 +360,16 @@ fun RecordEditorScreen(
                         .padding(horizontal = 16.dp, vertical = 12.dp)
                 ) {
                     if (!isSaveEnabled && !isCompressingPhoto) {
+                        val missingHint = when {
+                            partNumber.trim().isEmpty() && clientName.trim().isEmpty() ->
+                                "Укажите номер детали и Ф.И.О. клиента"
+                            partNumber.trim().isEmpty() ->
+                                "Для сохранения обязательно укажите номер детали"
+                            else ->
+                                "Для сохранения обязательно укажите Ф.И.О. клиента"
+                        }
                         Text(
-                            text = "Для сохранения обязательно укажите номер детали",
+                            text = missingHint,
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.error,
                             fontWeight = FontWeight.SemiBold,
@@ -271,8 +381,11 @@ fun RecordEditorScreen(
                             onSaveRecord(
                                 partNumber.trim(),
                                 selectedRepairType,
+                                selectedStatus,
+                                clientName.trim(),
+                                phoneFieldValue.text.trim(),
                                 dateTimeStr,
-                                photoPath
+                                photoPaths
                             )
                         },
                         enabled = isSaveEnabled,
@@ -309,9 +422,83 @@ fun RecordEditorScreen(
                 .padding(innerPadding)
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(18.dp)
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // 1. БЛОК ФОТОГРАФИИ ДЕТАЛИ
+            // 1. БЛОК СТАТУСА РЕМОНТА («Приёмка», «В работе», «Готова»)
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(18.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surface
+                ),
+                border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp)
+                ) {
+                    Text(
+                        text = "Статус ремонта",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        RepairStatus.entries.forEach { statusOption ->
+                            val isSelected = selectedStatus.equals(statusOption.label, ignoreCase = true)
+                            val color = getStatusBarColor(statusOption.label)
+                            FilterChip(
+                                selected = isSelected,
+                                onClick = { selectedStatus = statusOption.label },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(50.dp)
+                                    .testTag("editor_status_${statusOption.name.lowercase()}"),
+                                label = {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.Center,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        if (!isSelected) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(8.dp)
+                                                    .clip(CircleShape)
+                                                    .background(color)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                        }
+                                        Text(
+                                            text = statusOption.label,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 14.sp
+                                        )
+                                    }
+                                },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = color,
+                                    selectedLabelColor = Color.White
+                                ),
+                                border = FilterChipDefaults.filterChipBorder(
+                                    enabled = true,
+                                    selected = isSelected,
+                                    borderColor = color.copy(alpha = 0.6f),
+                                    selectedBorderColor = color,
+                                    borderWidth = 1.5.dp
+                                ),
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            // 2. ДАННЫЕ КЛИЕНТА («Ф.И.О. клиента» и «Номер телефона» с маской +7 (XXX) XXX-XX-XX)
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(18.dp),
@@ -324,51 +511,358 @@ fun RecordEditorScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(16.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    if (isCompressingPhoto) {
+                    Text(
+                        text = "Данные клиента",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+
+                    OutlinedTextField(
+                        value = clientName,
+                        onValueChange = { clientName = it },
+                        label = { Text("Ф.И.О. клиента *") },
+                        placeholder = { Text("Иванов Иван Иванович") },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.Person,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        },
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.bodyLarge,
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("client_name_input"),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = MaterialTheme.colorScheme.primary,
+                            unfocusedBorderColor = MaterialTheme.colorScheme.outline
+                        )
+                    )
+
+                    OutlinedTextField(
+                        value = phoneFieldValue,
+                        onValueChange = { newValue ->
+                            val formatted = ImageStorageHelper.formatRussianPhoneMask(newValue.text)
+                            phoneFieldValue = TextFieldValue(
+                                text = formatted,
+                                selection = TextRange(formatted.length)
+                            )
+                        },
+                        label = { Text("Номер телефона") },
+                        placeholder = { Text("+7 (999) 123-45-67") },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.Phone,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        },
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Phone
+                        ),
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.titleMedium.copy(
+                            fontFamily = JetBrainsMonoFontFamily
+                        ),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("client_phone_input"),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = MaterialTheme.colorScheme.primary,
+                            unfocusedBorderColor = MaterialTheme.colorScheme.outline
+                        )
+                    )
+                }
+            }
+
+            // 3. БЛОК «ФОТО» С ГОРИЗОНТАЛЬНОЙ ЛЕНТОЙ МИНИАТЮР (до 10 фото, удаление с подтверждением, перестановка)
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(18.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surface
+                ),
+                border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Фото",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Surface(
+                            color = if (photoPaths.size >= RepairRepository.MAX_PHOTOS_PER_RECORD) {
+                                MaterialTheme.colorScheme.errorContainer
+                            } else {
+                                MaterialTheme.colorScheme.surfaceVariant
+                            },
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text(
+                                text = "${photoPaths.size} из ${RepairRepository.MAX_PHOTOS_PER_RECORD}",
+                                fontFamily = JetBrainsMonoFontFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp,
+                                color = if (photoPaths.size >= RepairRepository.MAX_PHOTOS_PER_RECORD) {
+                                    MaterialTheme.colorScheme.onErrorContainer
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                                modifier = Modifier
+                                    .padding(horizontal = 10.dp, vertical = 4.dp)
+                                    .testTag("editor_photo_counter")
+                            )
+                        }
+                    }
+
+                    if (photoPaths.isNotEmpty()) {
+                        Text(
+                            text = "Первое фото — обложка карточки. Удерживайте миниатюру и тяните (или нажимайте стрелки ◄ ►), чтобы поменять порядок.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(
+                                    state = rememberScrollState(),
+                                    enabled = draggedIndex == null
+                                )
+                                .padding(vertical = 4.dp)
+                                .testTag("editor_photo_strip"),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            photoPaths.forEachIndexed { index, path ->
+                                val isDragged = draggedIndex == index
+                                val isCover = index == 0
+
+                                Box(
+                                    modifier = Modifier
+                                        .width(120.dp)
+                                        .zIndex(if (isDragged) 10f else 1f)
+                                        .graphicsLayer {
+                                            translationX = if (isDragged) dragOffsetX else 0f
+                                            scaleX = if (isDragged) 1.07f else 1f
+                                            scaleY = if (isDragged) 1.07f else 1f
+                                        }
+                                        .pointerInput(photoPaths.size) {
+                                            var currentIdx = index
+                                            detectDragGesturesAfterLongPress(
+                                                onDragStart = {
+                                                    currentIdx = index
+                                                    draggedIndex = currentIdx
+                                                    dragOffsetX = 0f
+                                                },
+                                                onDragEnd = {
+                                                    draggedIndex = null
+                                                    dragOffsetX = 0f
+                                                },
+                                                onDragCancel = {
+                                                    draggedIndex = null
+                                                    dragOffsetX = 0f
+                                                },
+                                                onDrag = { change, dragAmount ->
+                                                    change.consume()
+                                                    dragOffsetX += dragAmount.x
+                                                    val threshold = itemStepPx * 0.55f
+                                                    if (dragOffsetX > threshold && currentIdx < photoPaths.lastIndex) {
+                                                        movePhoto(currentIdx, currentIdx + 1)
+                                                        currentIdx += 1
+                                                        draggedIndex = currentIdx
+                                                        dragOffsetX -= itemStepPx
+                                                    } else if (dragOffsetX < -threshold && currentIdx > 0) {
+                                                        movePhoto(currentIdx, currentIdx - 1)
+                                                        currentIdx -= 1
+                                                        draggedIndex = currentIdx
+                                                        dragOffsetX += itemStepPx
+                                                    }
+                                                }
+                                            )
+                                        }
+                                        .testTag("editor_photo_item_$index")
+                                ) {
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(120.dp)
+                                                .clip(RoundedCornerShape(14.dp))
+                                                .border(
+                                                    width = if (isCover || isDragged) 2.5.dp else 1.dp,
+                                                    color = when {
+                                                        isDragged -> MaterialTheme.colorScheme.primary
+                                                        isCover -> WorkshopGreen
+                                                        else -> MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
+                                                    },
+                                                    shape = RoundedCornerShape(14.dp)
+                                                )
+                                        ) {
+                                            LocalPhotoThumbnail(
+                                                photoPath = path,
+                                                contentDescription = "Фото №${index + 1}",
+                                                maxDimension = 640,
+                                                modifier = Modifier.fillMaxSize()
+                                            )
+
+                                            // Бейдж «Обложка» на первом фото или номер фото
+                                            Surface(
+                                                color = if (isCover) {
+                                                    WorkshopGreen.copy(alpha = 0.92f)
+                                                } else {
+                                                    Color.Black.copy(alpha = 0.72f)
+                                                },
+                                                shape = RoundedCornerShape(8.dp),
+                                                modifier = Modifier
+                                                    .align(Alignment.BottomStart)
+                                                    .padding(6.dp)
+                                            ) {
+                                                Text(
+                                                    text = if (isCover) "1 • Обложка" else "№${index + 1}",
+                                                    color = Color.White,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 11.sp,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                )
+                                            }
+
+                                            // Маленький крестик для удаления фото (с подтверждением)
+                                            Surface(
+                                                color = WorkshopRed,
+                                                shape = CircleShape,
+                                                shadowElevation = 4.dp,
+                                                modifier = Modifier
+                                                    .align(Alignment.TopEnd)
+                                                    .padding(6.dp)
+                                                    .size(30.dp)
+                                                    .clickable { photoIndexPendingDelete = index }
+                                                    .testTag("delete_photo_button_$index")
+                                            ) {
+                                                Box(contentAlignment = Alignment.Center) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.Close,
+                                                        contentDescription = "Удалить фото №${index + 1}",
+                                                        tint = Color.White,
+                                                        modifier = Modifier.size(18.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+
+                                        if (photoPaths.size > 1) {
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                IconButton(
+                                                    onClick = { movePhoto(index, index - 1) },
+                                                    enabled = index > 0,
+                                                    modifier = Modifier.size(32.dp)
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                                                        contentDescription = "Сдвинуть влево",
+                                                        tint = if (index > 0) {
+                                                            MaterialTheme.colorScheme.primary
+                                                        } else {
+                                                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
+                                                        }
+                                                    )
+                                                }
+                                                Text(
+                                                    text = "${index + 1}/${photoPaths.size}",
+                                                    fontFamily = JetBrainsMonoFontFamily,
+                                                    fontSize = 12.sp,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                                IconButton(
+                                                    onClick = { movePhoto(index, index + 1) },
+                                                    enabled = index < photoPaths.lastIndex,
+                                                    modifier = Modifier.size(32.dp)
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                                        contentDescription = "Сдвинуть вправо",
+                                                        tint = if (index < photoPaths.lastIndex) {
+                                                            MaterialTheme.colorScheme.primary
+                                                        } else {
+                                                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
+                                                        }
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(220.dp),
+                                .height(110.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)),
                             contentAlignment = Alignment.Center
                         ) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
-                                Spacer(modifier = Modifier.height(12.dp))
-                                Text(
-                                    text = "Сжатие фото (1280px, JPEG 0.8)…",
-                                    style = MaterialTheme.typography.bodyLarge
-                                )
-                            }
+                            Text(
+                                text = "Пока нет фотографий (можно добавить до 10 шт.)",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.padding(horizontal = 16.dp)
+                            )
                         }
-                    } else if (!photoPath.isNullOrBlank()) {
-                        LocalPhotoThumbnail(
-                            photoPath = photoPath,
-                            contentDescription = "Превью фото детали",
-                            maxDimension = 1280,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(230.dp)
-                                .clip(RoundedCornerShape(14.dp))
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = "Фото сжато (до 1280 px, JPEG ~0.8) и сохранено локально",
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontSize = 13.sp,
-                            color = WorkshopGreen
-                        )
                     }
 
-                    Spacer(modifier = Modifier.height(12.dp))
+                    if (isCompressingPhoto) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 6.dp),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            CircularProgressIndicator(
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(24.dp),
+                                strokeWidth = 3.dp
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                text = "Сжатие фото (1280 px, JPEG 80%)…",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
 
-                    // Крупная кнопка «Сфотографировать» / «Переснять»
+                    // Кнопка «+ Сфотографировать»
                     Button(
                         onClick = { launchCameraCapture() },
+                        enabled = !isCompressingPhoto,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(60.dp)
+                            .height(58.dp)
                             .testTag("take_photo_button"),
                         shape = RoundedCornerShape(14.dp),
                         colors = ButtonDefaults.buttonColors(
@@ -377,36 +871,40 @@ fun RecordEditorScreen(
                         )
                     ) {
                         Icon(
-                            imageVector = if (photoPath.isNullOrBlank()) Icons.Default.CameraAlt else Icons.Default.Refresh,
+                            imageVector = Icons.Default.CameraAlt,
                             contentDescription = null,
-                            modifier = Modifier.size(26.dp)
+                            modifier = Modifier.size(24.dp)
                         )
                         Spacer(modifier = Modifier.width(10.dp))
                         Text(
-                            text = if (photoPath.isNullOrBlank()) "Сфотографировать" else "Переснять фото",
+                            text = "+ Сфотографировать",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    // Запасные варианты (выбор из галереи или быстрый снимок стенда для эмулятора)
+                    // Кнопка «+ Из галереи» (мультивыбор) + «Снимок стенда» для проверки в эмуляторе
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         OutlinedButton(
                             onClick = {
-                                pickPhotoLauncher.launch(
-                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                                )
+                                if (photoPaths.size >= RepairRepository.MAX_PHOTOS_PER_RECORD) {
+                                    onMessage("Можно добавить максимум ${RepairRepository.MAX_PHOTOS_PER_RECORD} фото в одну запись")
+                                } else {
+                                    pickMultiplePhotosLauncher.launch(
+                                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                    )
+                                }
                             },
+                            enabled = !isCompressingPhoto,
                             modifier = Modifier
                                 .weight(1f)
-                                .height(50.dp)
+                                .height(52.dp)
                                 .testTag("pick_gallery_button"),
-                            shape = RoundedCornerShape(12.dp)
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.PhotoLibrary,
@@ -415,33 +913,40 @@ fun RecordEditorScreen(
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = "Из файла",
-                                fontWeight = FontWeight.SemiBold
+                                text = "+ Из галереи",
+                                fontWeight = FontWeight.Bold
                             )
                         }
 
                         OutlinedButton(
                             onClick = {
+                                if (photoPaths.size >= RepairRepository.MAX_PHOTOS_PER_RECORD) {
+                                    onMessage("Можно добавить максимум ${RepairRepository.MAX_PHOTOS_PER_RECORD} фото в одну запись")
+                                    return@OutlinedButton
+                                }
                                 coroutineScope.launch {
                                     isCompressingPhoto = true
                                     val generated = ImageStorageHelper.createWorkshopPartSnapshot(
                                         context = context,
-                                        partCodeLabel = partNumber.trim()
+                                        partCodeLabel = partNumber.trim(),
+                                        photoIndexLabel = photoPaths.size + 1
                                     )
                                     isCompressingPhoto = false
                                     if (generated != null) {
-                                        photoPath = generated
+                                        photoPaths = (photoPaths + generated).take(RepairRepository.MAX_PHOTOS_PER_RECORD)
                                     }
                                 }
                             },
+                            enabled = !isCompressingPhoto,
                             modifier = Modifier
                                 .weight(1f)
-                                .height(50.dp)
+                                .height(52.dp)
                                 .testTag("demo_snapshot_button"),
-                            shape = RoundedCornerShape(12.dp)
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp)
                         ) {
                             Text(
-                                text = "Снимок стенда",
+                                text = "+ Снимок стенда",
                                 fontWeight = FontWeight.SemiBold
                             )
                         }
@@ -449,7 +954,7 @@ fun RecordEditorScreen(
                 }
             }
 
-            // 2. ПОЛЕ «НОМЕР ДЕТАЛИ» (обязательное)
+            // 4. ПОЛЕ «НОМЕР ДЕТАЛИ» (обязательное)
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(18.dp),
@@ -494,7 +999,7 @@ fun RecordEditorScreen(
                 }
             }
 
-            // 3. ПОЛЕ «ВИД РЕМОНТА» (выпадающий список + крупные чипы + свой вариант)
+            // 5. ПОЛЕ «ВИД РЕМОНТА»
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(18.dp),
@@ -515,7 +1020,6 @@ fun RecordEditorScreen(
                     )
                     Spacer(modifier = Modifier.height(10.dp))
 
-                    // Выпадающий список (Dropdown)
                     Box(modifier = Modifier.fillMaxWidth()) {
                         Surface(
                             modifier = Modifier
@@ -589,7 +1093,6 @@ fun RecordEditorScreen(
 
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    // Крупные кнопки быстрого выбора одной рукой
                     FlowRow(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -646,7 +1149,7 @@ fun RecordEditorScreen(
                 }
             }
 
-            // 4. ДАТА И ВРЕМЯ (автоматически + возможность исправить вручную)
+            // 6. ДАТА И ВРЕМЯ СОЗДАНИЯ
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(18.dp),
@@ -664,7 +1167,7 @@ fun RecordEditorScreen(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Дата и время (авто)",
+                            text = "Дата и время создания (авто)",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -707,7 +1210,57 @@ fun RecordEditorScreen(
         }
     }
 
-    // Диалог добавления своего вида ремонта
+    // Диалог подтверждения удаления фото из ленты
+    val deleteIdx = photoIndexPendingDelete
+    if (deleteIdx != null && deleteIdx in photoPaths.indices) {
+        AlertDialog(
+            onDismissRequest = { photoIndexPendingDelete = null },
+            title = {
+                Text(
+                    text = "Удалить фото №${deleteIdx + 1}?",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Text(
+                    text = "Вы уверены, что хотите убрать эту фотографию из записи?",
+                    style = MaterialTheme.typography.bodyLarge
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val removedPath = photoPaths[deleteIdx]
+                        // Если фото было создано только в текущей сессии и не принадлежит исходной записи, удаляем файл сразу
+                        if (removedPath !in initialPhotos) {
+                            ImageStorageHelper.deletePhotoFileIfExists(removedPath)
+                        }
+                        photoPaths = photoPaths.filterIndexed { i, _ -> i != deleteIdx }
+                        photoIndexPendingDelete = null
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = WorkshopRed,
+                        contentColor = Color.White
+                    ),
+                    modifier = Modifier
+                        .height(48.dp)
+                        .testTag("confirm_delete_photo_button")
+                ) {
+                    Text("Да, удалить", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { photoIndexPendingDelete = null },
+                    modifier = Modifier.height(48.dp)
+                ) {
+                    Text("Отмена")
+                }
+            }
+        )
+    }
+
     if (showAddCustomTypeDialog) {
         AlertDialog(
             onDismissRequest = { showAddCustomTypeDialog = false },
@@ -762,7 +1315,6 @@ fun RecordEditorScreen(
         )
     }
 
-    // Диалог ручного изменения даты и времени (формат ДД.ММ.ГГГГ ЧЧ:ММ)
     if (showEditDateTimeDialog) {
         AlertDialog(
             onDismissRequest = { showEditDateTimeDialog = false },
@@ -775,15 +1327,15 @@ fun RecordEditorScreen(
             text = {
                 Column {
                     Text(
-                        text = "Формат ДД.ММ.ГГГГ ЧЧ:ММ:",
+                        text = "Формат ДД.ММ.ГГГГ ЧЧ:ММ",
                         style = MaterialTheme.typography.bodyMedium
                     )
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
                     OutlinedTextField(
                         value = manualDateTimeInput,
                         onValueChange = { manualDateTimeInput = it },
                         singleLine = true,
-                        textStyle = MaterialTheme.typography.titleLarge.copy(
+                        textStyle = MaterialTheme.typography.titleMedium.copy(
                             fontFamily = JetBrainsMonoFontFamily
                         ),
                         modifier = Modifier
@@ -796,7 +1348,7 @@ fun RecordEditorScreen(
                             manualDateTimeInput = ImageStorageHelper.formatCurrentDateTime()
                         }
                     ) {
-                        Text("Поставить текущее время («Сейчас»)")
+                        Text("Поставить текущее время")
                     }
                 }
             },
@@ -811,7 +1363,7 @@ fun RecordEditorScreen(
                     },
                     modifier = Modifier.height(48.dp)
                 ) {
-                    Text("Готово")
+                    Text("Применить")
                 }
             },
             dismissButton = {
