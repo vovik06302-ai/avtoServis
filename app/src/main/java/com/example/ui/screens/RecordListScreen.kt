@@ -21,18 +21,19 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AddAPhoto
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.Handyman
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FabPosition
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -139,47 +140,49 @@ fun RecordListScreen(
                 )
             )
         },
+        floatingActionButton = {
+            FloatingActionButton(
+                onClick = onNewRecordClick,
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = Color.White,
+                shape = RoundedCornerShape(18.dp),
+                elevation = FloatingActionButtonDefaults.elevation(defaultElevation = 6.dp),
+                modifier = Modifier
+                    .height(64.dp)
+                    .testTag("new_record_fab")
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 20.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = "Новая запись",
+                        modifier = Modifier.size(28.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Новая запись",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
+            }
+        },
+        floatingActionButtonPosition = FabPosition.End,
         bottomBar = {
             Surface(
                 color = MaterialTheme.colorScheme.surface,
-                tonalElevation = 8.dp,
-                shadowElevation = 12.dp
+                tonalElevation = 4.dp
             ) {
-                Column(
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .navigationBarsPadding()
-                        .padding(horizontal = 16.dp, vertical = 10.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
+                        .padding(vertical = 8.dp),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Button(
-                        onClick = onNewRecordClick,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(64.dp)
-                            .testTag("new_record_button"),
-                        shape = RoundedCornerShape(16.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primary,
-                            contentColor = Color.White
-                        ),
-                        elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.AddAPhoto,
-                            contentDescription = null,
-                            modifier = Modifier.size(26.dp)
-                        )
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Text(
-                            text = "+ Новая запись",
-                            style = MaterialTheme.typography.titleLarge,
-                            color = Color.White
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(6.dp))
-
                     Text(
                         text = "Версия $APP_VERSION",
                         style = MaterialTheme.typography.labelMedium,
@@ -213,7 +216,7 @@ fun RecordListScreen(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Крупное поле поиска по номеру детали и виду ремонта
+            // Поле поиска по номеру детали и виду ремонта
             OutlinedTextField(
                 value = searchQuery,
                 onValueChange = onSearchQueryChange,
@@ -294,7 +297,7 @@ fun RecordListScreen(
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
                             text = if (searchQuery.isBlank()) {
-                                "Сфотографируйте деталь, укажите её номер и вид ремонта — нажмите «+ Новая запись» внизу экрана."
+                                "Сфотографируйте деталь, укажите её номер и вид ремонта — нажмите кнопку «+ Новая запись»."
                             } else {
                                 "По запросу «$searchQuery» деталей или видов ремонта не найдено."
                             },
@@ -311,7 +314,7 @@ fun RecordListScreen(
                         .weight(1f)
                         .testTag("records_lazy_column"),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
-                    contentPadding = PaddingValues(bottom = 16.dp)
+                    contentPadding = PaddingValues(bottom = 88.dp)
                 ) {
                     items(
                         items = records,
@@ -329,7 +332,7 @@ fun RecordListScreen(
 }
 
 @Composable
-private fun RepairRecordCard(
+fun RepairRecordCard(
     record: RepairRecord,
     onClick: () -> Unit
 ) {
