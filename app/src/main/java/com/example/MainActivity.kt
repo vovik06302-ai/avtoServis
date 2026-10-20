@@ -61,6 +61,7 @@ fun AutoServiceApp(viewModel: RepairViewModel) {
     val filteredRecords by viewModel.filteredRecords.collectAsStateWithLifecycle()
     val selectedStatusFilter by viewModel.selectedStatusFilter.collectAsStateWithLifecycle()
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
+    val dateRangeFilter by viewModel.dateRangeFilter.collectAsStateWithLifecycle()
     val repairTypes by viewModel.repairTypes.collectAsStateWithLifecycle()
     val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
     val customGithubRepo by viewModel.customGithubRepo.collectAsStateWithLifecycle()
@@ -100,6 +101,9 @@ fun AutoServiceApp(viewModel: RepairViewModel) {
                         onSelectStatusFilter = viewModel::selectStatusFilter,
                         searchQuery = searchQuery,
                         onSearchQueryChange = viewModel::updateSearchQuery,
+                        dateRangeFilter = dateRangeFilter,
+                        onApplyDateRangeFilter = viewModel::applyDateRangeFilter,
+                        onClearDateRangeFilter = viewModel::clearDateRangeFilter,
                         onNewRecordClick = viewModel::navigateToNewRecord,
                         onRecordClick = { record -> viewModel.navigateToDetail(record.id) },
                         onStatusChangeClick = { record, newStatus ->

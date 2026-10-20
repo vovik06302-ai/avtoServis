@@ -21,6 +21,22 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlin.math.max
+import kotlin.math.min
+
+enum class DateFilterTarget(val label: String, val shortLabel: String) {
+    CREATED_AT("По дате создания", "Создано"),
+    STATUS_CHANGED_AT("По дате изменения статуса", "Статус изменён")
+}
+
+data class DateRangeFilter(
+    val target: DateFilterTarget = DateFilterTarget.CREATED_AT,
+    val startUtcMillis: Long? = null,
+    val endUtcMillis: Long? = null
+) {
+    val isActive: Boolean
+        get() = startUtcMillis != null || endUtcMillis != null
+}
 
 sealed interface ScreenState {
     data object RecordList : ScreenState
@@ -43,6 +59,10 @@ class RepairViewModel(
     // null означает вкладку «Все», иначе конкретный статус («Приёмка», «В работе», «Готова»)
     private val _selectedStatusFilter = MutableStateFlow<String?>(null)
     val selectedStatusFilter: StateFlow<String?> = _selectedStatusFilter.asStateFlow()
+
+    // Фильтр по диапазону дат (создания или последнего изменения статуса)
+    private val _dateRangeFilter = MutableStateFlow(DateRangeFilter())
+    val dateRangeFilter: StateFlow<DateRangeFilter> = _dateRangeFilter.asStateFlow()
 
     private val _themeMode = MutableStateFlow(loadSavedThemeMode())
     val themeMode: StateFlow<AppThemeMode> = _themeMode.asStateFlow()
@@ -78,15 +98,44 @@ class RepairViewModel(
     val filteredRecords: StateFlow<List<RepairRecord>> = combine(
         allRecords,
         _searchQuery,
-        _selectedStatusFilter
-    ) { records, query, statusFilter ->
+        _selectedStatusFilter,
+        _dateRangeFilter
+    ) { records, query, statusFilter, dateFilter ->
         val trimmedQuery = query.trim()
         val queryDigits = trimmedQuery.filter { it.isDigit() }
+
+        val startMillis = dateFilter.startUtcMillis
+        val endMillis = dateFilter.endUtcMillis ?: startMillis
+        val minYmd = if (startMillis != null && endMillis != null) {
+            min(ImageStorageHelper.utcMillisToYmd(startMillis), ImageStorageHelper.utcMillisToYmd(endMillis))
+        } else {
+            null
+        }
+        val maxYmd = if (startMillis != null && endMillis != null) {
+            max(ImageStorageHelper.utcMillisToYmd(startMillis), ImageStorageHelper.utcMillisToYmd(endMillis))
+        } else {
+            null
+        }
 
         records.filter { rec ->
             val recStatus = RepairStatus.fromLabel(rec.status).label
             val matchesStatus = statusFilter == null || recStatus.equals(statusFilter, ignoreCase = true)
             if (!matchesStatus) return@filter false
+
+            if (minYmd != null && maxYmd != null) {
+                val targetDateStr = when (dateFilter.target) {
+                    DateFilterTarget.CREATED_AT -> rec.dateTimeStr
+                    DateFilterTarget.STATUS_CHANGED_AT -> rec.statusChangedAt.ifBlank { rec.dateTimeStr }
+                }
+                val recordYmd = ImageStorageHelper.extractYmdFromDateTimeStr(
+                    dateTimeStr = targetDateStr,
+                    fallbackMillis = rec.createdAtMillis
+                ) ?: return@filter false
+
+                if (recordYmd !in minYmd..maxYmd) {
+                    return@filter false
+                }
+            }
 
             if (trimmedQuery.isEmpty()) {
                 true
@@ -134,6 +183,25 @@ class RepairViewModel(
 
     fun selectStatusFilter(statusLabel: String?) {
         _selectedStatusFilter.value = statusLabel
+    }
+
+    fun applyDateRangeFilter(
+        target: DateFilterTarget,
+        startUtcMillis: Long?,
+        endUtcMillis: Long?
+    ) {
+        _dateRangeFilter.value = DateRangeFilter(
+            target = target,
+            startUtcMillis = startUtcMillis,
+            endUtcMillis = endUtcMillis ?: startUtcMillis
+        )
+    }
+
+    fun clearDateRangeFilter() {
+        _dateRangeFilter.value = _dateRangeFilter.value.copy(
+            startUtcMillis = null,
+            endUtcMillis = null
+        )
     }
 
     fun navigateToNewRecord() {

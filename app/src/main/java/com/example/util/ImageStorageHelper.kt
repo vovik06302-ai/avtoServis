@@ -17,8 +17,10 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -32,6 +34,55 @@ object ImageStorageHelper {
     fun formatCurrentDateTime(date: Date = Date()): String {
         val formatter = SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.forLanguageTag("ru-RU"))
         return formatter.format(date)
+    }
+
+    /**
+     * Преобразует строку вида "dd.MM.yyyy HH:mm" или "dd.MM.yyyy" в число YYYYMMDD
+     * для точного сравнения дат по диапазону без смещения часовых поясов.
+     */
+    fun extractYmdFromDateTimeStr(dateTimeStr: String, fallbackMillis: Long? = null): Int? {
+        val trimmed = dateTimeStr.trim()
+        val datePart = trimmed.substringBefore(" ").trim()
+        val parts = datePart.split(".")
+        if (parts.size >= 3) {
+            val day = parts[0].toIntOrNull()
+            val month = parts[1].toIntOrNull()
+            val year = parts[2].take(4).toIntOrNull()
+            if (day != null && month != null && year != null && day in 1..31 && month in 1..12 && year in 1970..2100) {
+                return year * 10000 + month * 100 + day
+            }
+        }
+        if (fallbackMillis != null && fallbackMillis > 0L) {
+            val cal = Calendar.getInstance()
+            cal.timeInMillis = fallbackMillis
+            val y = cal.get(Calendar.YEAR)
+            val m = cal.get(Calendar.MONTH) + 1
+            val d = cal.get(Calendar.DAY_OF_MONTH)
+            return y * 10000 + m * 100 + d
+        }
+        return null
+    }
+
+    /**
+     * Преобразует UTC-миллисекунды из Material3 DateRangePicker в число YYYYMMDD.
+     */
+    fun utcMillisToYmd(utcMillis: Long): Int {
+        val cal = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
+        cal.timeInMillis = utcMillis
+        val y = cal.get(Calendar.YEAR)
+        val m = cal.get(Calendar.MONTH) + 1
+        val d = cal.get(Calendar.DAY_OF_MONTH)
+        return y * 10000 + m * 100 + d
+    }
+
+    /**
+     * Форматирует UTC-миллисекунды из CalendarPicker в строку "ДД.ММ.ГГГГ".
+     */
+    fun formatUtcMillisToRussianDate(utcMillis: Long): String {
+        val formatter = SimpleDateFormat("dd.MM.yyyy", Locale.forLanguageTag("ru-RU")).apply {
+            timeZone = TimeZone.getTimeZone("UTC")
+        }
+        return formatter.format(Date(utcMillis))
     }
 
     /**
