@@ -8,6 +8,18 @@ plugins {
   alias(libs.plugins.google.services)
 }
 
+val resolvedVersionName: String = providers.gradleProperty("versionName").orNull
+  ?.trim()
+  ?.removePrefix("v")
+  ?.removePrefix("V")
+  ?.takeIf { it.isNotEmpty() }
+  ?: System.getenv("GITHUB_REF_NAME")
+    ?.trim()
+    ?.removePrefix("v")
+    ?.removePrefix("V")
+    ?.takeIf { it.matches(Regex("^\\d+\\.\\d+\\.\\d+.*$")) }
+  ?: "1.0.0"
+
 android {
   namespace = "com.example"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
@@ -17,7 +29,7 @@ android {
     minSdk = 24
     targetSdk = 36
     versionCode = 1
-    versionName = "1.0.0"
+    versionName = resolvedVersionName
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }

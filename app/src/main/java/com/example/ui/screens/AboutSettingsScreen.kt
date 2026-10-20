@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudSync
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -52,11 +53,11 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.BuildConfig
 import com.example.ui.components.UpdateAvailableBanner
 import com.example.ui.theme.AppThemeMode
 import com.example.ui.theme.JetBrainsMonoFontFamily
 import com.example.ui.theme.WorkshopGreen
-import com.example.update.APP_VERSION
 import com.example.update.GITHUB_REPO
 import com.example.update.ReleaseInfo
 
@@ -91,7 +92,7 @@ fun AboutSettingsScreen(
             TopAppBar(
                 title = {
                     Text(
-                        text = "О приложении и настройки",
+                        text = "О приложении",
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold
                     )
@@ -124,7 +125,7 @@ fun AboutSettingsScreen(
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // 1. ВЕРСИЯ ПРИЛОЖЕНИЯ (APP_VERSION)
+            // 1. ВЕРСИЯ ПРИЛОЖЕНИЯ (BuildConfig.VERSION_NAME)
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(18.dp),
@@ -154,16 +155,16 @@ fun AboutSettingsScreen(
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "Версия $APP_VERSION (APP_VERSION)",
+                            text = "Версия ${BuildConfig.VERSION_NAME}",
                             fontFamily = JetBrainsMonoFontFamily,
                             fontWeight = FontWeight.Bold,
-                            fontSize = 16.sp,
+                            fontSize = 18.sp,
                             color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.testTag("about_version_text")
                         )
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
-                            text = "Работает автономно без интернета • Сжатие фото 1280px JPEG ~0.8",
+                            text = "Локальное хранение без интернета • Фото до 1280px JPEG ~0.8",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             fontSize = 13.sp
@@ -202,7 +203,7 @@ fun AboutSettingsScreen(
                     }
 
                     Text(
-                        text = "Константа GITHUB_REPO по умолчанию: $GITHUB_REPO",
+                        text = "Репозиторий: https://github.com/$GITHUB_REPO",
                         fontFamily = JetBrainsMonoFontFamily,
                         fontSize = 13.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -310,7 +311,44 @@ fun AboutSettingsScreen(
                 }
             }
 
-            // 3. ВЫБОР ТЕМЫ ОФОРМЛЕНИЯ (Тёмная / Светлая / Как в системе)
+            // 3. ПАМЯТКА ПО РАЗРЕШЕНИЮ УСТАНОВКИ APK
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(18.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surface
+                ),
+                border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Security,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(26.dp)
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(
+                            text = "Как разрешить установку обновлений",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    Text(
+                        text = "При первой установке скачанного обновления Android попросит разрешение «Установка неизвестных приложений». В открывшемся окне включите переключатель «Разрешить установку из этого источника» для «АвтоСервис», нажмите «Назад» и подтвердите кнопку «Обновить».",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            // 4. ВЫБОР ТЕМЫ ОФОРМЛЕНИЯ (Тёмная / Светлая / Как в системе)
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(18.dp),

@@ -23,6 +23,7 @@ import com.example.data.AppDatabase
 import com.example.data.RepairRepository
 import com.example.ui.RepairViewModel
 import com.example.ui.ScreenState
+import com.example.ui.components.UpdateAvailableDialog
 import com.example.ui.screens.AboutSettingsScreen
 import com.example.ui.screens.RecordDetailScreen
 import com.example.ui.screens.RecordEditorScreen
@@ -157,6 +158,18 @@ fun AutoServiceApp(viewModel: RepairViewModel) {
                         onNavigateBack = viewModel::navigateBackToList
                     )
                 }
+            }
+
+            // Модальный диалог обновления с анимированным ProgressBar при наличии новой версии
+            val release = availableRelease
+            if (release != null) {
+                UpdateAvailableDialog(
+                    release = release,
+                    isDownloading = isDownloadingApk,
+                    downloadProgress = downloadProgress,
+                    onDownloadAndInstall = { viewModel.downloadAndInstallUpdate(context, release) },
+                    onDismiss = viewModel::dismissUpdateBanner
+                )
             }
         }
     }

@@ -41,13 +41,16 @@ jobs:
               -dname "CN=AutoService, OU=Workshop, O=AutoService, L=Moscow, S=Moscow, C=RU"
           fi
 
-      - name: Build Release APK
+      - name: Build Release APK with matching versionName
         env:
           KEYSTORE_PATH: ${{ github.workspace }}/my-upload-key.jks
           STORE_PASSWORD: android
           KEY_PASSWORD: android
         run: |
+          RAW_TAG="${GITHUB_REF_NAME:-v1.0.0}"
+          VERSION_NAME="${RAW_TAG#v}"
           ./gradlew assembleRelease \
+            -PversionName="${VERSION_NAME}" \
             --no-configuration-cache \
             -Dkotlin.compiler.execution.strategy=daemon \
             -Pksp.incremental=false \
@@ -62,13 +65,13 @@ jobs:
             echo "Release APK not found!"
             exit 1
           fi
-          cp "$APK_PATH" "autoservice-${VERSION_NAME}.apk"
+          cp "$APK_PATH" "avtoServis-${VERSION_NAME}.apk"
 
       - name: Create GitHub Release and Upload APK
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: autoservice-*.apk
+          files: avtoServis-*.apk
           generate_release_notes: true
           draft: false
           prerelease: false

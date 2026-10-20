@@ -1,11 +1,11 @@
 /**
- * Модуль автообновления через GitHub Releases (для веб/Capacitor сборки и справки).
+ * Модуль автообновления через GitHub Releases (для веб/Capacitor сборки).
  * Нативная Android-реализация находится в:
  * app/src/main/java/com/example/update/UpdateManager.kt
  */
 
 export const APP_VERSION = "1.0.0";
-export const GITHUB_REPO = "ВАШ_ЛОГИН/ВАШ_РЕПОЗИТОРИЙ";
+export const GITHUB_REPO = "vovik06302-ai/avtoServis";
 
 export interface GitHubReleaseAsset {
   name: string;
@@ -31,7 +31,6 @@ export interface UpdateInfo {
 
 /**
  * Сравнивает версии по числам (major.minor.patch), убирая префикс "v".
- * Возвращает 1, если remote > current; 0, если равны; -1, если remote < current.
  */
 export function compareVersionsNumeric(remoteTag: string, currentVersion: string = APP_VERSION): number {
   const cleanRemote = remoteTag.trim().replace(/^[vV]/, "").split("-")[0];
@@ -52,20 +51,9 @@ export function compareVersionsNumeric(remoteTag: string, currentVersion: string
 
 /**
  * Запрашивает последний релиз через GitHub API:
- * https://api.github.com/repos/{GITHUB_REPO}/releases/latest
+ * https://api.github.com/repos/vovik06302-ai/avtoServis/releases/latest
  */
 export async function checkForGithubUpdate(): Promise<UpdateInfo> {
-  if (!GITHUB_REPO || GITHUB_REPO === "ВАШ_ЛОГИН/ВАШ_РЕПОЗИТОРИЙ" || !GITHUB_REPO.includes("/")) {
-    return {
-      available: false,
-      latestVersion: APP_VERSION,
-      releaseNotes: "",
-      apkUrl: null,
-      apkFileName: null,
-      error: "Укажите ваш репозиторий в константе GITHUB_REPO в файле update/updateManager.ts",
-    };
-  }
-
   try {
     const response = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/latest`, {
       headers: {
@@ -106,37 +94,4 @@ export async function checkForGithubUpdate(): Promise<UpdateInfo> {
       error: "Нет интернета или GitHub недоступен. Приложение продолжает работать офлайн.",
     };
   }
-}
-
-/**
- * Скачивает APK с отслеживанием прогресса (0..100%) для цветной шкалы прогресса.
- */
-export async function downloadApkWithProgress(
-  apkUrl: string,
-  onProgress: (percent: number) => void
-): Promise<Blob> {
-  const response = await fetch(apkUrl);
-  if (!response.ok || !response.body) {
-    throw new Error(`Ошибка загрузки APK (${response.status})`);
-  }
-
-  const contentLength = Number(response.headers.get("Content-Length") || 0);
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let receivedLength = 0;
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (value) {
-      chunks.push(value);
-      receivedLength += value.length;
-      if (contentLength > 0) {
-        onProgress(Math.min(99, Math.round((receivedLength / contentLength) * 100)));
-      }
-    }
-  }
-
-  onProgress(100);
-  return new Blob(chunks, { type: "application/vnd.android.package-archive" });
 }

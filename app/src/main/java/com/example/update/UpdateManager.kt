@@ -2,7 +2,12 @@ package com.example.update
 
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
+import android.widget.Toast
 import androidx.core.content.FileProvider
+import com.example.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -14,16 +19,15 @@ import java.util.concurrent.TimeUnit
 import kotlin.math.max
 
 /**
- * Единая константа версии приложения.
- * Отображается внизу главного экрана («Версия 1.0.0») и на экране «О приложении».
+ * Репозиторий GitHub для проверки и загрузки обновлений через GitHub Releases API.
  */
-const val APP_VERSION = "1.0.0"
+const val GITHUB_REPO = "vovik06302-ai/avtoServis"
 
 /**
- * Единая константа репозитория GitHub для автоматической проверки релизов.
- * Поменяйте на свой логин и репозиторий, например: "ivanov/autoservice-app"
+ * Текущая версия приложения из BuildConfig.VERSION_NAME (например, "1.0.0").
+ * Отображается на экране «О приложении» и мелким текстом внизу главного экрана.
  */
-const val GITHUB_REPO = "ВАШ_ЛОГИН/ВАШ_РЕПОЗИТОРИЙ"
+val APP_VERSION: String = BuildConfig.VERSION_NAME
 
 data class ReleaseInfo(
     val version: String,
@@ -45,17 +49,21 @@ object UpdateManager {
 
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(12, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.SECONDS)
+        .readTimeout(25, TimeUnit.SECONDS)
         .build()
 
     /**
-     * Сравнивает две версии по числам (major.minor.patch), убирая префикс 'v' или 'V'.
+     * Сравнивает версию из tag_name (без буквы "v", например v1.0.1 -> 1.0.1)
+     * с текущей версией приложения (BuildConfig.VERSION_NAME) по числам major.minor.patch.
      * Возвращает:
-     *  > 0, если remoteVersion новее currentVersion
+     *  > 0, если remoteTag новее currentVersion
      *  = 0, если версии равны
-     *  < 0, если remoteVersion старее currentVersion
+     *  < 0, если remoteTag старее currentVersion
      */
-    fun compareVersionsNumeric(remoteTag: String, currentVersion: String = APP_VERSION): Int {
+    fun compareVersionsNumeric(
+        remoteTag: String,
+        currentVersion: String = BuildConfig.VERSION_NAME
+    ): Int {
         val cleanRemote = remoteTag.trim().removePrefix("v").removePrefix("V").substringBefore("-")
         val cleanCurrent = currentVersion.trim().removePrefix("v").removePrefix("V").substringBefore("-")
 
@@ -75,21 +83,18 @@ object UpdateManager {
 
     /**
      * Проверяет последний релиз через GitHub API:
-     * https://api.github.com/repos/{GITHUB_REPO}/releases/latest
+     * https://api.github.com/repos/vovik06302-ai/avtoServis/releases/latest
      */
     suspend fun checkForUpdates(customRepoOverride: String? = null): UpdateCheckResult = withContext(Dispatchers.IO) {
-        val repo = customRepoOverride?.trim()?.takeIf { it.isNotEmpty() } ?: GITHUB_REPO
-        if (repo == "ВАШ_ЛОГИН/ВАШ_РЕПОЗИТОРИЙ" || !repo.contains("/") || repo.startsWith("ВАШ_")) {
-            return@withContext UpdateCheckResult.Error(
-                "Репозиторий GitHub ещё не настроен ($repo). Укажите свой логин/репозиторий в константе GITHUB_REPO."
-            )
-        }
+        val repo = customRepoOverride?.trim()?.takeIf {
+            it.isNotEmpty() && it != "ВАШ_ЛОГИН/ВАШ_РЕПОЗИТОРИЙ"
+        } ?: GITHUB_REPO
 
         val url = "https://api.github.com/repos/$repo/releases/latest"
         val request = Request.Builder()
             .url(url)
             .header("Accept", "application/vnd.github+json")
-            .header("User-Agent", "AutoService-Android-App/$APP_VERSION")
+            .header("User-Agent", "AutoService-Android-App/${BuildConfig.VERSION_NAME}")
             .get()
             .build()
 
@@ -97,29 +102,29 @@ object UpdateManager {
             httpClient.newCall(request).execute().use { response ->
                 if (response.code == 404) {
                     return@withContext UpdateCheckResult.Error(
-                        "Репозиторий «$repo» не найден или в нём ещё нет опубликованных релизов (Releases)."
+                        "В репозитории $repo ещё нет опубликованных релизов (Releases)."
                     )
                 }
                 if (!response.isSuccessful) {
                     return@withContext UpdateCheckResult.Error(
-                        "Сервер GitHub вернул код ${response.code}. Приложение продолжает работать офлайн."
+                        "Не удалось проверить обновление (код ${response.code}). Приложение продолжает работать."
                     )
                 }
 
                 val bodyStr = response.body?.string()
-                    ?: return@withContext UpdateCheckResult.Error("Пустой ответ от GitHub API.")
+                    ?: return@withContext UpdateCheckResult.Error("Пустой ответ от сервера GitHub.")
 
                 val json = JSONObject(bodyStr)
                 val tagName = json.optString("tag_name", "").trim()
                 if (tagName.isEmpty()) {
-                    return@withContext UpdateCheckResult.Error("В последнем релизе отсутствует tag_name.")
+                    return@withContext UpdateCheckResult.Error("В релизе на GitHub не указан тег версии (tag_name).")
                 }
 
                 val cleanVersion = tagName.removePrefix("v").removePrefix("V")
                 val releaseNotes = json.optString("body", "").trim().ifEmpty {
-                    "Исправление ошибок и улучшение стабильности."
+                    "Исправление ошибок и улучшение работы приложения."
                 }
-                val htmlUrl = json.optString("html_url", "https://github.com/$repo/releases")
+                val htmlUrl = json.optString("html_url", "https://github.com/$repo/releases/latest")
 
                 var apkUrl: String? = null
                 var apkName: String? = null
@@ -140,7 +145,7 @@ object UpdateManager {
                     }
                 }
 
-                val cmp = compareVersionsNumeric(tagName, APP_VERSION)
+                val cmp = compareVersionsNumeric(tagName, BuildConfig.VERSION_NAME)
                 if (cmp > 0) {
                     UpdateCheckResult.UpdateAvailable(
                         ReleaseInfo(
@@ -154,18 +159,19 @@ object UpdateManager {
                         )
                     )
                 } else {
-                    UpdateCheckResult.UpToDate(APP_VERSION)
+                    UpdateCheckResult.UpToDate(BuildConfig.VERSION_NAME)
                 }
             }
         } catch (e: Exception) {
             UpdateCheckResult.Error(
-                "Нет подключения к интернету или GitHub недоступен. Приложение работает в автономном режиме."
+                "Нет подключения к интернету или GitHub недоступен. Приложение продолжает работать в автономном режиме."
             )
         }
     }
 
     /**
-     * Скачивает APK из assets релиза с прогрессом (0f..1f) и запускает установку APK.
+     * Скачивает файл .apk из assets релиза с отображением прогресса (0f..1f)
+     * и запускает установку APK через FileProvider.
      */
     suspend fun downloadAndInstallApk(
         context: Context,
@@ -176,7 +182,7 @@ object UpdateManager {
         try {
             val request = Request.Builder()
                 .url(apkUrl)
-                .header("User-Agent", "AutoService-Android-App/$APP_VERSION")
+                .header("User-Agent", "AutoService-Android-App/${BuildConfig.VERSION_NAME}")
                 .build()
 
             httpClient.newCall(request).execute().use { response ->
@@ -226,7 +232,31 @@ object UpdateManager {
         }
     }
 
+    /**
+     * Запускает системный установщик APK через FileProvider.
+     * На Android 8.0+ (API 26+) проверяет разрешение canRequestPackageInstalls()
+     * и при необходимости открывает системный экран включения установки из этого источника.
+     */
     fun promptInstallApk(context: Context, apkFile: File) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val canInstall = context.packageManager.canRequestPackageInstalls()
+            if (!canInstall) {
+                Toast.makeText(
+                    context,
+                    "Включите переключатель «Разрешить установку из этого источника» и нажмите Назад для установки обновления",
+                    Toast.LENGTH_LONG
+                ).show()
+                val settingsIntent = Intent(
+                    Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                    Uri.parse("package:${context.packageName}")
+                ).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(settingsIntent)
+                return
+            }
+        }
+
         val uri = FileProvider.getUriForFile(
             context,
             "${context.packageName}.fileprovider",

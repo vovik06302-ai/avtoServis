@@ -8,7 +8,6 @@ import androidx.lifecycle.viewModelScope
 import com.example.data.RepairRecord
 import com.example.data.RepairRepository
 import com.example.ui.theme.AppThemeMode
-import com.example.update.APP_VERSION
 import com.example.update.GITHUB_REPO
 import com.example.update.ReleaseInfo
 import com.example.update.UpdateCheckResult
@@ -43,9 +42,7 @@ class RepairViewModel(
     private val _themeMode = MutableStateFlow(loadSavedThemeMode())
     val themeMode: StateFlow<AppThemeMode> = _themeMode.asStateFlow()
 
-    private val _customGithubRepo = MutableStateFlow(
-        prefs.getString(KEY_CUSTOM_REPO, GITHUB_REPO) ?: GITHUB_REPO
-    )
+    private val _customGithubRepo = MutableStateFlow(loadInitialGithubRepo())
     val customGithubRepo: StateFlow<String> = _customGithubRepo.asStateFlow()
 
     // Состояние проверки обновлений через GitHub API
@@ -96,6 +93,15 @@ class RepairViewModel(
     init {
         // Автоматическая проверка обновлений при запуске приложения
         checkForUpdates(isManualTrigger = false)
+    }
+
+    private fun loadInitialGithubRepo(): String {
+        val saved = prefs.getString(KEY_CUSTOM_REPO, null)?.trim()
+        if (saved.isNullOrEmpty() || saved == "ВАШ_ЛОГИН/ВАШ_РЕПОЗИТОРИЙ" || saved.startsWith("ВАШ_")) {
+            prefs.edit().putString(KEY_CUSTOM_REPO, GITHUB_REPO).apply()
+            return GITHUB_REPO
+        }
+        return saved
     }
 
     fun updateSearchQuery(query: String) {
@@ -229,9 +235,9 @@ class RepairViewModel(
                 }
                 is UpdateCheckResult.UpToDate -> {
                     _availableRelease.value = null
-                    _updateMessage.value = "У вас последняя версия (${result.currentVersion})"
+                    _updateMessage.value = "У вас последняя версия"
                     if (isManualTrigger) {
-                        showSnackbar("У вас последняя версия (${result.currentVersion})")
+                        showSnackbar("У вас последняя версия")
                     }
                 }
                 is UpdateCheckResult.Error -> {

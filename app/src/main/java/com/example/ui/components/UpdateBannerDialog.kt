@@ -1,13 +1,24 @@
 package com.example.ui.components
 
 import android.graphics.Bitmap
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -19,16 +30,17 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.SystemUpdate
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -38,12 +50,20 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.ui.theme.JetBrainsMonoFontFamily
 import com.example.ui.theme.SafetyOrange
 import com.example.ui.theme.WorkshopAmber
@@ -52,6 +72,234 @@ import com.example.ui.theme.WorkshopGreen
 import com.example.update.ReleaseInfo
 import com.example.util.ImageStorageHelper
 import kotlin.math.roundToInt
+
+/**
+ * Компонент ProgressBar с плавным анимированным заполнением и движущимся световым бликом
+ * для отображения прогресса скачивания APK в диалоге и баннере обновления.
+ */
+@Composable
+fun ProgressBar(
+    progress: Float,
+    modifier: Modifier = Modifier,
+    label: String = "Загрузка APK…"
+) {
+    val targetProgress = progress.coerceIn(0f, 1f)
+
+    // Плавная анимация заполнения шкалы
+    val animatedProgress by animateFloatAsState(
+        targetValue = targetProgress,
+        animationSpec = tween(
+            durationMillis = 350,
+            easing = FastOutSlowInEasing
+        ),
+        label = "apk_progress_fill"
+    )
+
+    // Бесконечная анимация светового блика по заполненной части шкалы
+    val infiniteTransition = rememberInfiniteTransition(label = "apk_progress_shimmer")
+    val shimmerOffset by infiniteTransition.animateFloat(
+        initialValue = -0.35f,
+        targetValue = 1.35f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1200, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "shimmer_offset"
+    )
+
+    val percent = (animatedProgress * 100f).roundToInt().coerceIn(0, 100)
+    val trackColor = MaterialTheme.colorScheme.surfaceVariant
+    val outlineColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)
+
+    Column(modifier = modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = if (percent >= 100) "Загрузка завершена, запуск установки…" else label,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                text = "$percent%",
+                fontFamily = JetBrainsMonoFontFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 16.sp,
+                color = if (percent >= 100) WorkshopGreen else MaterialTheme.colorScheme.primary,
+                modifier = Modifier.testTag("apk_download_percent_text")
+            )
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(20.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(trackColor)
+                .border(1.dp, outlineColor, RoundedCornerShape(10.dp))
+                .semantics {
+                    progressBarRangeInfo = ProgressBarRangeInfo(animatedProgress, 0f..1f)
+                }
+                .testTag("apk_download_progress_bar")
+        ) {
+            Canvas(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .fillMaxHeight()
+            ) {
+                val fillWidth = (size.width * animatedProgress).coerceAtLeast(0f)
+                if (fillWidth > 0f) {
+                    val gradientBrush = Brush.horizontalGradient(
+                        colors = listOf(
+                            SafetyOrange,
+                            WorkshopAmber,
+                            WorkshopGreen
+                        ),
+                        startX = 0f,
+                        endX = size.width.coerceAtLeast(1f)
+                    )
+
+                    drawRoundRect(
+                        brush = gradientBrush,
+                        topLeft = Offset.Zero,
+                        size = Size(width = fillWidth, height = size.height),
+                        cornerRadius = CornerRadius(10.dp.toPx(), 10.dp.toPx())
+                    )
+
+                    // Анимированный блик поверх заполняемой полосы
+                    if (animatedProgress < 1f) {
+                        val bandWidth = size.width * 0.28f
+                        val startX = shimmerOffset * fillWidth
+                        val shimmerBrush = Brush.linearGradient(
+                            colors = listOf(
+                                Color.Transparent,
+                                Color.White.copy(alpha = 0.38f),
+                                Color.Transparent
+                            ),
+                            start = Offset(startX - bandWidth, 0f),
+                            end = Offset(startX + bandWidth, size.height)
+                        )
+                        drawRoundRect(
+                            brush = shimmerBrush,
+                            topLeft = Offset.Zero,
+                            size = Size(width = fillWidth, height = size.height),
+                            cornerRadius = CornerRadius(10.dp.toPx(), 10.dp.toPx())
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Модальный диалог обновления приложения через GitHub API с анимированным ProgressBar.
+ */
+@Composable
+fun UpdateAvailableDialog(
+    release: ReleaseInfo,
+    isDownloading: Boolean,
+    downloadProgress: Float,
+    onDownloadAndInstall: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = {
+            if (!isDownloading) {
+                onDismiss()
+            }
+        },
+        modifier = Modifier.testTag("update_available_dialog"),
+        icon = {
+            Icon(
+                imageVector = Icons.Default.SystemUpdate,
+                contentDescription = "Доступно обновление",
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(36.dp)
+            )
+        },
+        title = {
+            Text(
+                text = "Доступно обновление: ${release.version}",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                if (!release.apkName.isNullOrBlank()) {
+                    Text(
+                        text = "Пакет: ${release.apkName}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                if (release.body.isNotBlank()) {
+                    Text(
+                        text = release.body,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+
+                if (isDownloading) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    ProgressBar(
+                        progress = downloadProgress,
+                        label = "Скачивание обновления…"
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            if (!isDownloading) {
+                Button(
+                    onClick = onDownloadAndInstall,
+                    modifier = Modifier
+                        .height(52.dp)
+                        .testTag("dialog_download_install_button"),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = Color.White
+                    )
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.SystemUpdate,
+                        contentDescription = null,
+                        modifier = Modifier.size(22.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Скачать и установить",
+                        style = MaterialTheme.typography.labelLarge
+                    )
+                }
+            }
+        },
+        dismissButton = {
+            if (!isDownloading) {
+                TextButton(
+                    onClick = onDismiss,
+                    modifier = Modifier
+                        .height(48.dp)
+                        .testTag("dialog_dismiss_update_button")
+                ) {
+                    Text("Позже")
+                }
+            }
+        }
+    )
+}
 
 @Composable
 fun UpdateAvailableBanner(
@@ -105,6 +353,7 @@ fun UpdateAvailableBanner(
                 }
                 IconButton(
                     onClick = onDismiss,
+                    enabled = !isDownloading,
                     modifier = Modifier
                         .size(48.dp)
                         .testTag("dismiss_update_banner_button")
@@ -129,37 +378,10 @@ fun UpdateAvailableBanner(
             Spacer(modifier = Modifier.height(14.dp))
 
             if (isDownloading) {
-                val percent = (downloadProgress * 100).roundToInt().coerceIn(0, 100)
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(
-                            text = "Загрузка APK…",
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                        Text(
-                            text = "$percent%",
-                            fontFamily = JetBrainsMonoFontFamily,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(8.dp))
-                    LinearProgressIndicator(
-                        progress = { downloadProgress.coerceIn(0f, 1f) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(14.dp)
-                            .clip(RoundedCornerShape(7.dp))
-                            .testTag("apk_download_progress_bar"),
-                        color = WorkshopGreen,
-                        trackColor = MaterialTheme.colorScheme.surfaceVariant
-                    )
-                }
+                ProgressBar(
+                    progress = downloadProgress,
+                    label = "Загрузка APK…"
+                )
             } else {
                 Button(
                     onClick = onDownloadAndInstall,
