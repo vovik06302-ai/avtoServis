@@ -1,5 +1,10 @@
 package com.example.ui.screens
 
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.os.BatteryManager
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -28,6 +33,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.BatteryAlert
+import androidx.compose.material.icons.filled.BatteryChargingFull
+import androidx.compose.material.icons.filled.BatteryFull
+import androidx.compose.material.icons.filled.BatteryStd
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Close
@@ -63,6 +72,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDateRangePickerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -71,6 +81,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -95,6 +106,119 @@ import com.example.update.ReleaseInfo
 import com.example.util.ImageStorageHelper
 import java.util.Calendar
 import java.util.TimeZone
+import kotlin.math.roundToInt
+
+data class BatteryStatusInfo(
+    val percentage: Int,
+    val isCharging: Boolean
+)
+
+@Composable
+private fun rememberBatteryStatus(): BatteryStatusInfo {
+    val context = LocalContext.current
+
+    fun parseBatteryIntent(intent: Intent?): BatteryStatusInfo {
+        if (intent != null) {
+            val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+            val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
+            val status = intent.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
+            val plugged = intent.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0)
+            val charging = status == BatteryManager.BATTERY_STATUS_CHARGING ||
+                status == BatteryManager.BATTERY_STATUS_FULL ||
+                plugged != 0
+            if (level >= 0 && scale > 0) {
+                val pct = ((level.toFloat() / scale.toFloat()) * 100f).roundToInt().coerceIn(0, 100)
+                return BatteryStatusInfo(percentage = pct, isCharging = charging)
+            }
+        }
+        val bm = context.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
+        val propLevel = bm?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) ?: 100
+        return BatteryStatusInfo(
+            percentage = propLevel.coerceIn(0, 100),
+            isCharging = false
+        )
+    }
+
+    var batteryStatus by remember {
+        val stickyIntent = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        mutableStateOf(parseBatteryIntent(stickyIntent))
+    }
+
+    DisposableEffect(context) {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context?, intent: Intent?) {
+                batteryStatus = parseBatteryIntent(intent)
+            }
+        }
+        val filter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
+        val initial = context.registerReceiver(receiver, filter)
+        if (initial != null) {
+            batteryStatus = parseBatteryIntent(initial)
+        }
+        onDispose {
+            try {
+                context.unregisterReceiver(receiver)
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    return batteryStatus
+}
+
+@Composable
+private fun BatteryStatusBadge(
+    batteryStatus: BatteryStatusInfo,
+    modifier: Modifier = Modifier
+) {
+    val pct = batteryStatus.percentage
+    val isCharging = batteryStatus.isCharging
+
+    val badgeColor = when {
+        isCharging -> Color(0xFF16A34A)
+        pct <= 20 -> Color(0xFFDC2626)
+        pct <= 45 -> Color(0xFFD97706)
+        else -> Color(0xFF16A34A)
+    }
+
+    val icon = when {
+        isCharging -> Icons.Default.BatteryChargingFull
+        pct <= 20 -> Icons.Default.BatteryAlert
+        pct <= 60 -> Icons.Default.BatteryStd
+        else -> Icons.Default.BatteryFull
+    }
+
+    Surface(
+        shape = RoundedCornerShape(8.dp),
+        color = badgeColor.copy(alpha = 0.14f),
+        border = BorderStroke(1.dp, badgeColor.copy(alpha = 0.45f)),
+        modifier = modifier.testTag("battery_status_badge")
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(3.dp)
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = if (isCharging) {
+                    "Заряд батареи $pct%, заряжается"
+                } else {
+                    "Заряд батареи $pct%"
+                },
+                tint = badgeColor,
+                modifier = Modifier.size(14.dp)
+            )
+            Text(
+                text = if (isCharging) "$pct% ⚡" else "$pct%",
+                fontFamily = JetBrainsMonoFontFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 11.sp,
+                color = badgeColor
+            )
+        }
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -125,6 +249,7 @@ fun RecordListScreen(
     val inProgressCount = allRecords.count { RepairStatus.fromLabel(it.status) == RepairStatus.IN_PROGRESS }
     val readyCount = allRecords.count { RepairStatus.fromLabel(it.status) == RepairStatus.READY }
 
+    val batteryStatus = rememberBatteryStatus()
     var showCalendarPickerDialog by remember { mutableStateOf(false) }
 
     Scaffold(
@@ -138,12 +263,18 @@ fun RecordListScreen(
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold
                         )
-                        Text(
-                            text = "Всего записей: $totalCount",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 13.sp
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = "Всего записей: $totalCount",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 13.sp
+                            )
+                            BatteryStatusBadge(batteryStatus = batteryStatus)
+                        }
                     }
                 },
                 actions = {
