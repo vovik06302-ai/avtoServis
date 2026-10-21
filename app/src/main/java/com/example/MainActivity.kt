@@ -1,10 +1,15 @@
 package com.example
 
+import android.Manifest
 import android.content.Context
+import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -14,13 +19,16 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.AppDatabase
 import com.example.data.RepairRepository
+import com.example.ui.ReadyNotificationEvent
 import com.example.ui.RepairViewModel
 import com.example.ui.ScreenState
 import com.example.ui.components.UpdateAvailableDialog
@@ -29,11 +37,18 @@ import com.example.ui.screens.RecordDetailScreen
 import com.example.ui.screens.RecordEditorScreen
 import com.example.ui.screens.RecordListScreen
 import com.example.ui.theme.MyApplicationTheme
+import com.example.util.RepairNotificationHelper
 
 class MainActivity : ComponentActivity() {
+
+    private var pendingRecordIdFromNotification by mutableStateOf<Long?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        RepairNotificationHelper.ensureNotificationChannel(applicationContext)
+        extractNotificationRecordId(intent)
 
         val database = AppDatabase.getInstance(applicationContext)
         val repository = RepairRepository(database.repairDao())
@@ -45,9 +60,31 @@ class MainActivity : ComponentActivity() {
             )
             val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
 
+            LaunchedEffect(pendingRecordIdFromNotification) {
+                val targetId = pendingRecordIdFromNotification
+                if (targetId != null && targetId > 0L) {
+                    viewModel.navigateToDetail(targetId)
+                    pendingRecordIdFromNotification = null
+                }
+            }
+
             MyApplicationTheme(themeMode = themeMode) {
                 AutoServiceApp(viewModel = viewModel)
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        extractNotificationRecordId(intent)
+    }
+
+    private fun extractNotificationRecordId(intent: Intent?) {
+        val id = intent?.getLongExtra(RepairNotificationHelper.EXTRA_RECORD_ID, -1L) ?: -1L
+        if (id > 0L) {
+            pendingRecordIdFromNotification = id
+            intent?.removeExtra(RepairNotificationHelper.EXTRA_RECORD_ID)
         }
     }
 }
@@ -72,8 +109,55 @@ fun AutoServiceApp(viewModel: RepairViewModel) {
     val isDownloadingApk by viewModel.isDownloadingApk.collectAsStateWithLifecycle()
     val downloadProgress by viewModel.downloadProgress.collectAsStateWithLifecycle()
     val snackbarMessage by viewModel.snackbarMessage.collectAsStateWithLifecycle()
+    val readyNotificationEvent by viewModel.readyNotificationEvent.collectAsStateWithLifecycle()
 
     val snackbarHostState = remember { SnackbarHostState() }
+    var pendingNotificationAfterPermission by remember { mutableStateOf<ReadyNotificationEvent?>(null) }
+
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        val pendingEvent = pendingNotificationAfterPermission
+        pendingNotificationAfterPermission = null
+        if (isGranted && pendingEvent != null) {
+            RepairNotificationHelper.showRepairReadyNotification(
+                context = context,
+                recordId = pendingEvent.recordId,
+                partNumber = pendingEvent.partNumber,
+                repairType = pendingEvent.repairType,
+                clientName = pendingEvent.clientName,
+                phone = pendingEvent.phone
+            )
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        RepairNotificationHelper.ensureNotificationChannel(context)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            !RepairNotificationHelper.hasNotificationPermission(context)
+        ) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
+    LaunchedEffect(readyNotificationEvent) {
+        val event = readyNotificationEvent ?: return@LaunchedEffect
+        viewModel.consumeReadyNotificationEvent()
+
+        if (RepairNotificationHelper.hasNotificationPermission(context)) {
+            RepairNotificationHelper.showRepairReadyNotification(
+                context = context,
+                recordId = event.recordId,
+                partNumber = event.partNumber,
+                repairType = event.repairType,
+                clientName = event.clientName,
+                phone = event.phone
+            )
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            pendingNotificationAfterPermission = event
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
 
     LaunchedEffect(snackbarMessage) {
         val msg = snackbarMessage

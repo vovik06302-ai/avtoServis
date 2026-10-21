@@ -56,9 +56,10 @@ jobs:
           VERSION_NAME="${RAW_TAG#v}"
           ./gradlew assembleRelease \
             -PversionName="${VERSION_NAME}" \
-            --no-configuration-cache \
-            -Dkotlin.compiler.execution.strategy=daemon \
             -Pksp.incremental=false \
+            -Pksp.useKSP2=true \
+            -Pandroid.disallowKotlinSourceSets=false \
+            --no-configuration-cache \
             --stacktrace
 
       - name: Prepare signed app-release.apk

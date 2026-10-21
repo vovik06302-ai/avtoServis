@@ -38,6 +38,14 @@ data class DateRangeFilter(
         get() = startUtcMillis != null || endUtcMillis != null
 }
 
+data class ReadyNotificationEvent(
+    val recordId: Long,
+    val partNumber: String,
+    val repairType: String,
+    val clientName: String,
+    val phone: String
+)
+
 sealed interface ScreenState {
     data object RecordList : ScreenState
     data class RecordEditor(val editingRecord: RepairRecord? = null) : ScreenState
@@ -88,6 +96,10 @@ class RepairViewModel(
 
     private val _snackbarMessage = MutableStateFlow<String?>(null)
     val snackbarMessage: StateFlow<String?> = _snackbarMessage.asStateFlow()
+
+    // Событие для показа локального Android-уведомления при смене статуса на «Готова»
+    private val _readyNotificationEvent = MutableStateFlow<ReadyNotificationEvent?>(null)
+    val readyNotificationEvent: StateFlow<ReadyNotificationEvent?> = _readyNotificationEvent.asStateFlow()
 
     val allRecords: StateFlow<List<RepairRecord>> = repository.allRecords
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -248,6 +260,16 @@ class RepairViewModel(
                 statusChangedAt = nowStr
             )
             showSnackbar("Статус «${record.partNumber}» изменён на «$normalizedNew»")
+
+            if (normalizedNew == RepairStatus.READY.label) {
+                _readyNotificationEvent.value = ReadyNotificationEvent(
+                    recordId = record.id,
+                    partNumber = record.partNumber,
+                    repairType = record.repairType,
+                    clientName = record.clientName,
+                    phone = record.phone
+                )
+            }
         }
     }
 
@@ -282,7 +304,7 @@ class RepairViewModel(
 
         viewModelScope.launch {
             if (existingRecord == null) {
-                repository.insertRecordWithPhotos(
+                val newId = repository.insertRecordWithPhotos(
                     record = RepairRecord(
                         partNumber = cleanPart,
                         repairType = cleanRepair,
@@ -297,6 +319,16 @@ class RepairViewModel(
                     photoPaths = finalPhotos
                 )
                 showSnackbar("Запись «$cleanPart» сохранена")
+
+                if (cleanStatus == RepairStatus.READY.label) {
+                    _readyNotificationEvent.value = ReadyNotificationEvent(
+                        recordId = newId,
+                        partNumber = cleanPart,
+                        repairType = cleanRepair,
+                        clientName = cleanClient,
+                        phone = cleanPhone
+                    )
+                }
             } else {
                 val previousPhotos = repository.getPhotosForRecord(existingRecord.id)
                     .ifEmpty { listOfNotNull(existingRecord.photoPath?.takeIf { it.isNotBlank() }) }
@@ -304,7 +336,8 @@ class RepairViewModel(
                 ImageStorageHelper.deletePhotoFiles(removedPhotos)
 
                 val oldStatus = RepairStatus.fromLabel(existingRecord.status).label
-                val updatedStatusChangedAt = if (oldStatus != cleanStatus) {
+                val statusChanged = oldStatus != cleanStatus
+                val updatedStatusChangedAt = if (statusChanged) {
                     nowStr
                 } else {
                     existingRecord.statusChangedAt.ifBlank { existingRecord.dateTimeStr }
@@ -324,6 +357,16 @@ class RepairViewModel(
                     photoPaths = finalPhotos
                 )
                 showSnackbar("Запись «$cleanPart» обновлена")
+
+                if (statusChanged && cleanStatus == RepairStatus.READY.label) {
+                    _readyNotificationEvent.value = ReadyNotificationEvent(
+                        recordId = existingRecord.id,
+                        partNumber = cleanPart,
+                        repairType = cleanRepair,
+                        clientName = cleanClient,
+                        phone = cleanPhone
+                    )
+                }
             }
             _screenState.value = ScreenState.RecordList
             onSaved()
@@ -468,6 +511,10 @@ class RepairViewModel(
 
     fun clearSnackbar() {
         _snackbarMessage.value = null
+    }
+
+    fun consumeReadyNotificationEvent() {
+        _readyNotificationEvent.value = null
     }
 
     private fun loadSavedThemeMode(): AppThemeMode {
