@@ -27,27 +27,15 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x ./gradlew
 
-      - name: Prepare fallback debug.keystore and decode release keystore.jks
+      - name: Decode release keystore from KEYSTORE_BASE64
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
-          # 1. Гарантируем наличие debug.keystore в корне проекта (на случай если секреты ещё не заданы)
-          if [ ! -f "${GITHUB_WORKSPACE}/debug.keystore" ] && [ -f "${GITHUB_WORKSPACE}/debug.keystore.base64" ]; then
-            tr -d '\r\n ' < "${GITHUB_WORKSPACE}/debug.keystore.base64" | base64 --decode > "${GITHUB_WORKSPACE}/debug.keystore" || true
-          fi
-
-          # 2. Декодируем постоянный релизный ключ из секрета KEYSTORE_BASE64 в файл keystore.jks
-          if [ -n "$KEYSTORE_BASE64" ]; then
-            printf "%s" "$KEYSTORE_BASE64" | tr -d '\r\n ' | base64 --decode -i > "${GITHUB_WORKSPACE}/keystore.jks"
-            cp "${GITHUB_WORKSPACE}/keystore.jks" "${GITHUB_WORKSPACE}/app/keystore.jks"
-            echo "Release keystore decoded successfully (${GITHUB_WORKSPACE}/keystore.jks)"
-          else
-            echo "WARNING: KEYSTORE_BASE64 secret is empty. Falling back to debug.keystore."
-          fi
+          printf "%s" "$KEYSTORE_BASE64" | tr -d '\r\n ' | base64 --decode > "$GITHUB_WORKSPACE/release.keystore"
 
       - name: Build signed Release APK (assembleRelease)
         env:
-          KEYSTORE_FILE: ${{ github.workspace }}/keystore.jks
+          KEYSTORE_FILE: ${{ github.workspace }}/release.keystore
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}

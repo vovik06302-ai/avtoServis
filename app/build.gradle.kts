@@ -1,5 +1,3 @@
-import java.security.KeyStore
-
 plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.kotlin.compose)
@@ -56,65 +54,12 @@ android {
       keyPassword = "android"
     }
     create("release") {
-      val rawKeystorePath = System.getenv("KEYSTORE_FILE")?.trim()?.takeIf { it.isNotEmpty() }
-        ?: System.getenv("KEYSTORE_PATH")?.trim()?.takeIf { it.isNotEmpty() }
-      val rawStorePassword = System.getenv("KEYSTORE_PASSWORD")?.trim()?.takeIf { it.isNotEmpty() }
-        ?: System.getenv("STORE_PASSWORD")?.trim()?.takeIf { it.isNotEmpty() }
-      val rawKeyAlias = System.getenv("KEY_ALIAS")?.trim()?.takeIf { it.isNotEmpty() }
-        ?: if (System.getenv("KEYSTORE_PATH") != null) "upload" else null
-      val rawKeyPassword = System.getenv("KEY_PASSWORD")?.trim()?.takeIf { it.isNotEmpty() }
-        ?: rawStorePassword
-
-      // Ищем файл keystore как по указанному пути (относительно app/), так и относительно корня проекта (rootDir)
-      val resolvedKeystoreFile = rawKeystorePath?.let { path ->
-        val direct = file(path)
-        val fromRoot = rootProject.file(path)
-        when {
-          direct.exists() && direct.length() > 0L -> direct
-          fromRoot.exists() && fromRoot.length() > 0L -> fromRoot
-          else -> null
-        }
-      }
-
-      var configuredWithReleaseKey = false
-      if (resolvedKeystoreFile != null && !rawStorePassword.isNullOrBlank() && !rawKeyPassword.isNullOrBlank()) {
-        try {
-          val ks = KeyStore.getInstance(KeyStore.getDefaultType())
-          resolvedKeystoreFile.inputStream().use { input ->
-            ks.load(input, rawStorePassword.toCharArray())
-          }
-          val actualAlias = when {
-            !rawKeyAlias.isNullOrBlank() && ks.containsAlias(rawKeyAlias) -> rawKeyAlias
-            ks.aliases().hasMoreElements() -> ks.aliases().nextElement()
-            else -> rawKeyAlias
-          }
-          if (!actualAlias.isNullOrBlank()) {
-            storeFile = resolvedKeystoreFile
-            storePassword = rawStorePassword
-            keyAlias = actualAlias
-            keyPassword = rawKeyPassword
-            configuredWithReleaseKey = true
-          }
-        } catch (e: Exception) {
-          logger.warn("Не удалось загрузить release keystore (${e.message}), используется резервная debug-подпись.")
-        }
-      }
-
-      if (!configuredWithReleaseKey) {
-        // Fallback на debug-подпись, если переменные окружения не заданы или keystore недоступен
-        val localDebugKeystore = file("${rootDir}/debug.keystore")
-        if (localDebugKeystore.exists()) {
-          storeFile = localDebugKeystore
-          storePassword = "android"
-          keyAlias = "androiddebugkey"
-          keyPassword = "android"
-        } else {
-          val defaultDebug = signingConfigs.getByName("debug")
-          storeFile = defaultDebug.storeFile
-          storePassword = defaultDebug.storePassword
-          keyAlias = defaultDebug.keyAlias
-          keyPassword = defaultDebug.keyPassword
-        }
+      val keystorePath = System.getenv("KEYSTORE_FILE")?.trim()
+      if (!keystorePath.isNullOrEmpty()) {
+        storeFile = rootProject.file(keystorePath)
+        storePassword = System.getenv("KEYSTORE_PASSWORD")
+        keyAlias = System.getenv("KEY_ALIAS")
+        keyPassword = System.getenv("KEY_PASSWORD")
       }
     }
   }
